@@ -21,45 +21,63 @@ type Client struct {
 	framework.CloseableObject
 	//接收消息时，是否异步回调
 	AsyncMessage   bool
+	Connected      bool
+	Reconnect      bool
 	Reason         string
 	OnMessage      func(msg string)
 	OnConnected    func(msg string)
 	OnDisconnected func(msg string)
+
+	Address      string
+	HeartMessage string
 }
 
 func NewClient() *Client {
-	return &Client{
+	cli := &Client{
 		HeartTimeout: time.Second * 50,
 		AsyncMessage: true,
 		Reason:       "",
+		Reconnect:    true,
 	}
+	cli.IsClosed = false
+	cli.SetOnCloseHandler(cli)
+	return cli
 }
 
 func (c *Client) Connect(address, heartMessage string) error {
+	c.Address = address
+	c.HeartMessage = heartMessage
 	websocket.DefaultDialer.HandshakeTimeout = 10 * time.Second
 	websocket.DefaultDialer.TLSClientConfig = &tls.Config{
 		InsecureSkipVerify: true,
 	}
 	ws, _, err := websocket.DefaultDialer.Dial(address, nil)
 	if err != nil {
+		if c.Reconnect {
+			go c.ReconnectWorking()
+		}
 		return err
 	}
 	c.conn = ws
+	c.lastMessageTime = time.Now()
+	c.lastHeartTime = time.Now()
+	c.Connected = true
 	if c.OnConnected != nil {
 		c.OnConnected(fmt.Sprintf("{\"local\":\"%s\",\"remote\":\"%s\"}",
 			ws.LocalAddr().String(), ws.RemoteAddr().String()))
 	}
-	c.lastMessageTime = time.Now()
-	c.lastHeartTime = time.Now()
 	c.conn.SetCloseHandler(func(code int, text string) error {
 		c.Reason = fmt.Sprintf("{\"code\":%d,\"msg\":\"%s\"}", code, text)
 		c.Close()
 		return nil
 	})
 	go func() {
-		c.Close()
+		defer c.Disconnect()
 		for {
 			if c.conn == nil {
+				break
+			}
+			if !c.Connected {
 				break
 			}
 			if c.IsClosed {
@@ -101,14 +119,15 @@ func (c *Client) Heart(heartMessage string) {
 	tickerDuration := c.HeartTimeout
 	expireDuration := c.HeartTimeout + 10*time.Second
 	c.heartTicker = time.NewTicker(time.Second) //每秒检查一次
-	defer c.Close()
+	defer c.Disconnect()
 	for range c.heartTicker.C {
 		if c.conn == nil {
-			//c.Reason = "{\"code\":9,\"msg\":\"no connection\"}"
+			break
+		}
+		if !c.Connected {
 			break
 		}
 		if c.IsClosed {
-			//c.Reason = "{\"code\":0,\"msg\":\"ping time out\"}"
 			break
 		}
 		if c.lastMessageTime.Add(expireDuration).Compare(time.Now()) < 0 {
@@ -125,24 +144,14 @@ func (c *Client) Heart(heartMessage string) {
 }
 
 func (c *Client) OnClosing() bool {
-	slog.Debug("正在断开websocket连接...")
-	if c.OnDisconnected != nil {
-		c.OnDisconnected(c.Reason)
-		c.Reason = ""
-	}
-	if c.heartTicker != nil {
-		c.heartTicker.Stop()
-		c.heartTicker = nil
-	}
+	c.Reconnect = false
+	c.Reason = "主动断开连接"
+	c.Disconnect()
 	return true
 }
 
 func (c *Client) OnClosed() {
-	if c.conn != nil {
-		_ = c.conn.Close()
-		c.conn = nil
-	}
-	slog.Debug("websocket已经断开！")
+	slog.Debug("websocket已经销毁...")
 }
 
 func (c *Client) SendJson(v any) error {
@@ -166,4 +175,41 @@ func (c *Client) GetLocalAddr() string {
 }
 func (c *Client) GetRemoteAddr() string {
 	return c.conn.RemoteAddr().String()
+}
+func (c *Client) Disconnect() {
+	if c.Connected {
+		slog.Debug("正在断开websocket连接...")
+		if c.OnDisconnected != nil {
+			c.OnDisconnected(c.Reason)
+			c.Reason = ""
+		}
+		if c.heartTicker != nil {
+			c.heartTicker.Stop()
+			c.heartTicker = nil
+		}
+		if c.conn != nil {
+			_ = c.conn.Close()
+			c.conn = nil
+		}
+		c.Connected = false
+		slog.Debug("websocket已经断开！")
+		if c.Reconnect {
+			go c.ReconnectWorking()
+		}
+	}
+}
+
+func (c *Client) ReconnectWorking() {
+	//for {
+	time.Sleep(1 * time.Second)
+	if c.Reconnect == true && c.Connected == false {
+		err := c.Connect(c.Address, c.HeartMessage)
+		if err != nil {
+			slog.Error("重新连接发生错误", slog.Any("err", err))
+		}
+	}
+	//	if c.Reconnect == false || c.Connected {
+	//		break
+	//	}
+	//}
 }

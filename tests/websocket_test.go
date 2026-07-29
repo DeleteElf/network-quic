@@ -3,6 +3,7 @@ package tests
 import (
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/DeleteElf/zero-net/websocket"
+	"github.com/deleteelf/goframework/utils/jsonhelper"
 	"log/slog"
 	"testing"
 	"time"
@@ -11,12 +12,18 @@ import (
 func TestWebSocketClient(t *testing.T) {
 	utils.InitLog(slog.LevelDebug, nil)
 	client := websocket.NewClient()
+	client.HeartTimeout = time.Second * 5
 	isFirst := true
 	client.OnConnected = func(address string) {
 		slog.Info("与服务端连接", slog.String("address", address))
 	}
 	client.OnDisconnected = func(address string) {
 		slog.Info("与服务端断开连接", slog.String("address", address))
+		result, _ := jsonhelper.GetJsonObject([]byte(address))
+
+		if client.Reconnect && result["code"].(float64) == 1 {
+			_ = client.Connect(client.Address, client.HeartMessage)
+		}
 	}
 	client.OnMessage = func(msg string) {
 		slog.Info("收到新的消息", slog.String("msg", msg))
@@ -33,8 +40,11 @@ func TestWebSocketClient(t *testing.T) {
 	if err != nil {
 		slog.Error("连接发生错误", slog.Any("err", err))
 	}
+	stopTime := time.Now().Add(10 * time.Minute)
 	for {
 		time.Sleep(1 * time.Second)
+		if time.Now().Compare(stopTime) > 0 {
+			break
+		}
 	}
-
 }

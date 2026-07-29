@@ -19,6 +19,7 @@ const (
 
 	STREAM_NETWORK_TCP = "tcp"
 	STREAM_NETWORK_UDP = "udp"
+	DefaultBufferSize  = 7 * 1024 * 1024
 )
 
 type StreamInfo struct {

@@ -27,6 +27,14 @@ func NewUdpSocketClient(serverAddr string) (*net.UDPConn, net.Addr, error) {
 	if err != nil {
 		return nil, svrAddr, err
 	}
+	err = conn.SetReadBuffer(DefaultBufferSize)
+	if err != nil {
+		return nil, nil, err
+	}
+	err = conn.SetWriteBuffer(DefaultBufferSize)
+	if err != nil {
+		return nil, nil, err
+	}
 	return conn, svrAddr, nil
 }
 
@@ -44,6 +52,16 @@ func NewUdpSocketServer(addr string) (net.PacketConn, error) {
 	conn, err := config.ListenPacket(context.Background(), STREAM_NETWORK_UDP, addr)
 	if err != nil {
 		return nil, err
+	}
+	if udpConn, ok := conn.(*net.UDPConn); ok {
+		err = udpConn.SetReadBuffer(DefaultBufferSize)
+		if err != nil {
+			return nil, err
+		}
+		err = udpConn.SetWriteBuffer(DefaultBufferSize)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return conn, nil
 }
