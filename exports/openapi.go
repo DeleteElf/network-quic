@@ -625,7 +625,11 @@ func WebSocketConnect(config *C.NetworkData) C.int {
 		return C.ErrorParam
 	}
 	url := jsonObject["url"].(string)
-	err = websocketClient.Connect(url, "")
+	heartMessage := websocket.DefaultHeartMessage
+	if jsonObject["heart"] != nil {
+		heartMessage = jsonObject["heart"].(string)
+	}
+	err = websocketClient.Connect(url, heartMessage)
 	if err != nil {
 		return C.Error
 	}

@@ -3,7 +3,6 @@ package tests
 import (
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/DeleteElf/zero-net/websocket"
-	"github.com/deleteelf/goframework/utils/jsonhelper"
 	"log/slog"
 	"testing"
 	"time"
@@ -19,9 +18,7 @@ func TestWebSocketClient(t *testing.T) {
 	}
 	client.OnDisconnected = func(reason string) {
 		slog.Info("与服务端断开连接", slog.String("reason", reason))
-		result, _ := jsonhelper.GetJsonObject([]byte(reason))
-
-		if client.Reconnect && result["code"].(float64) == 1 {
+		if client.Reconnect && !client.IsClosed {
 			_ = client.Connect(client.Address, client.HeartMessage)
 		}
 	}

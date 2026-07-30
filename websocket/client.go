@@ -68,7 +68,7 @@ func (c *Client) Connect(address, heartMessage string) error {
 	}
 	c.conn.SetCloseHandler(func(code int, text string) error {
 		c.Reason = fmt.Sprintf("{\"code\":%d,\"msg\":\"%s\"}", code, text)
-		c.Close()
+		c.Disconnect()
 		return nil
 	})
 	go func() {
@@ -109,13 +109,17 @@ func (c *Client) Connect(address, heartMessage string) error {
 			}
 		}
 	}()
-	if len(heartMessage) != 0 {
-		c.Heart(heartMessage)
-	}
+	c.Heart(c.HeartMessage)
 	return nil
 }
 
 func (c *Client) Heart(heartMessage string) {
+	if len(heartMessage) == 0 {
+		return
+	}
+	if c.HeartMessage != heartMessage {
+		c.HeartMessage = heartMessage
+	}
 	tickerDuration := c.HeartTimeout
 	expireDuration := c.HeartTimeout + 10*time.Second
 	c.heartTicker = time.NewTicker(time.Second) //每秒检查一次
