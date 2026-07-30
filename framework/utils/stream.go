@@ -50,7 +50,7 @@ func ReadStreamByHeaderType(stream *quic.Stream, headerType HeaderType) ([]byte,
 			break
 		}
 	}
-	//slog.Debug("从流中读取到数据", slog.Any("长度", length))
+	//slog.Debug("从流中读取到数据", slog.Int("长度", length))
 	return ReadStreamFull(stream, length)
 }
 

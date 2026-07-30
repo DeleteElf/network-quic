@@ -187,7 +187,7 @@ func (s *Server) processStream(stream *quic.Stream, onDisconnect streams.SocketC
 		return
 	}
 	if info.Index < 0 || info.Index >= MaxStreamCount {
-		slog.Error("无效的通道", slog.Any("chn", info.Index))
+		slog.Error("无效的通道", slog.Int("chn", info.Index))
 		_ = streams.CloseStream(stream)
 		return
 	}

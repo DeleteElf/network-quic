@@ -89,7 +89,7 @@ func (c *Client) Connect(address, heartMessage string) error {
 				break
 			}
 			c.lastMessageTime = time.Now()
-			slog.Debug("receive message:", slog.Any("msg", msg))
+			slog.Debug("接收消息", slog.Any("body", msg))
 			result, err := jsonhelper.GetJsonObject(msg)
 			if err != nil {
 				c.Reason = fmt.Sprintf("{\"code\":%d,\"msg\":\"%s\"}", 3, err.Error())
@@ -168,7 +168,7 @@ func (c *Client) SendJson(v any) error {
 
 func (c *Client) Send(msg string) error {
 	if c.conn != nil && !c.IsClosed {
-		slog.Debug("发送消息：", slog.Any("msg", msg))
+		slog.Debug("发送消息", slog.String("body", msg))
 		return c.conn.WriteMessage(websocket.TextMessage, []byte(msg))
 	}
 	return nil

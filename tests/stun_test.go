@@ -19,7 +19,7 @@ func TestStunClient(t *testing.T) {
 	} else {
 		slog.Info("====================================")
 		slog.Info("你的公网 IP 地址 :", slog.Any("ip", client.ExternalAddress.IP))
-		slog.Info("你的公网映射端口 : ", slog.Any("port", client.ExternalAddress.Port))
+		slog.Info("你的公网映射端口 : ", slog.Int("port", client.ExternalAddress.Port))
 		slog.Info("====================================")
 	}
 

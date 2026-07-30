@@ -13,7 +13,7 @@ func receiveHandler(cli *client.Client, channelIndex int) {
 	slog.Info("正在准备接收数据", slog.Int("channel", channelIndex))
 	_, err := cli.Socket.ReceiveDataToBuffer(channelIndex)
 	if err != nil {
-		slog.Error("ReceiveDataToBuffer error", slog.Any("err", err.Error()))
+		slog.Error("ReceiveDataToBuffer error", slog.Any("err", err))
 		return
 	}
 	if channelIndex >= len(cli.Socket.StreamChannels) {

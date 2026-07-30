@@ -108,7 +108,7 @@ func (mgr *ManagePlatform) sendJson(v any) error {
 
 func (mgr *ManagePlatform) send(msg string) error {
 	if mgr.wsConn != nil {
-		slog.Debug("发送消息：", slog.Any("msg", msg))
+		slog.Debug("平台发送", slog.String("body", msg))
 		return mgr.wsConn.WriteMessage(websocket.TextMessage, []byte(msg))
 	}
 	return nil
@@ -160,7 +160,7 @@ func (mgr *ManagePlatform) ListenAgentConnect(onAcceptSocket, onDisconnect strea
 		if err != nil {
 			return err
 		}
-		slog.Debug("mgr return message:", slog.Any("msg", msg))
+		slog.Debug("平台收到", slog.Any("body", msg))
 		var proxy ActionProxy
 		if err := json.Unmarshal(msg, &proxy); err != nil {
 			slog.Warn("json Unmarshal err", slog.Any("err", err))
