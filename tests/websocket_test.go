@@ -17,9 +17,9 @@ func TestWebSocketClient(t *testing.T) {
 	client.OnConnected = func(address string) {
 		slog.Info("与服务端连接", slog.String("address", address))
 	}
-	client.OnDisconnected = func(address string) {
-		slog.Info("与服务端断开连接", slog.String("address", address))
-		result, _ := jsonhelper.GetJsonObject([]byte(address))
+	client.OnDisconnected = func(reason string) {
+		slog.Info("与服务端断开连接", slog.String("reason", reason))
+		result, _ := jsonhelper.GetJsonObject([]byte(reason))
 
 		if client.Reconnect && result["code"].(float64) == 1 {
 			_ = client.Connect(client.Address, client.HeartMessage)
@@ -35,11 +35,12 @@ func TestWebSocketClient(t *testing.T) {
 		}
 		slog.Info("处理完消息", slog.String("msg", msg))
 	}
-
-	err := client.Connect("wss://192.168.199.159:3005/device?type=device&apikey=575D6618206A2754", websocket.DefaultHeartMessage)
-	if err != nil {
-		slog.Error("连接发生错误", slog.Any("err", err))
-	}
+	go func() {
+		err := client.Connect("wss://192.168.199.159:3005/device?type=device&apikey=575D6618206A2754", websocket.DefaultHeartMessage)
+		if err != nil {
+			slog.Error("连接发生错误", slog.Any("err", err))
+		}
+	}()
 	stopTime := time.Now().Add(2 * time.Minute)
 	for {
 		time.Sleep(1 * time.Second)
