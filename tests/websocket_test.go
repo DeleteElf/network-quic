@@ -40,11 +40,12 @@ func TestWebSocketClient(t *testing.T) {
 	if err != nil {
 		slog.Error("连接发生错误", slog.Any("err", err))
 	}
-	stopTime := time.Now().Add(10 * time.Minute)
+	stopTime := time.Now().Add(2 * time.Minute)
 	for {
 		time.Sleep(1 * time.Second)
 		if time.Now().Compare(stopTime) > 0 {
 			break
 		}
 	}
+	client.Close()
 }
