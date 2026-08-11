@@ -13,7 +13,7 @@ import (
 var DefaultHeartMessage string = "{\"action\":\"ping\",\"from\":\"host\"}"
 
 type Client struct {
-	conn            *websocket.Conn
+	Conn            *websocket.Conn
 	heartTicker     *time.Ticker
 	lastMessageTime time.Time
 	lastHeartTime   time.Time
@@ -58,7 +58,7 @@ func (c *Client) Connect(address, heartMessage string) error {
 		}
 		return err
 	}
-	c.conn = ws
+	c.Conn = ws
 	c.lastMessageTime = time.Now()
 	c.lastHeartTime = time.Now()
 	c.Connected = true
@@ -66,7 +66,7 @@ func (c *Client) Connect(address, heartMessage string) error {
 		c.OnConnected(fmt.Sprintf("{\"local\":\"%s\",\"remote\":\"%s\"}",
 			ws.LocalAddr().String(), ws.RemoteAddr().String()))
 	}
-	c.conn.SetCloseHandler(func(code int, text string) error {
+	c.Conn.SetCloseHandler(func(code int, text string) error {
 		c.Reason = fmt.Sprintf("{\"code\":%d,\"msg\":\"%s\"}", code, text)
 		c.Disconnect()
 		return nil
@@ -74,7 +74,7 @@ func (c *Client) Connect(address, heartMessage string) error {
 	go func() {
 		defer c.Disconnect()
 		for {
-			if c.conn == nil {
+			if c.Conn == nil {
 				break
 			}
 			if !c.Connected {
@@ -83,7 +83,7 @@ func (c *Client) Connect(address, heartMessage string) error {
 			if c.IsClosed {
 				break
 			}
-			_, msg, err := c.conn.ReadMessage()
+			_, msg, err := c.Conn.ReadMessage()
 			if err != nil {
 				c.Reason = fmt.Sprintf("{\"code\":%d,\"msg\":\"%s\"}", 2, err.Error())
 				break
@@ -125,7 +125,7 @@ func (c *Client) Heart(heartMessage string) {
 	c.heartTicker = time.NewTicker(time.Second) //每秒检查一次
 	defer c.Disconnect()
 	for range c.heartTicker.C {
-		if c.conn == nil {
+		if c.Conn == nil {
 			break
 		}
 		if !c.Connected {
@@ -167,18 +167,18 @@ func (c *Client) SendJson(v any) error {
 }
 
 func (c *Client) Send(msg string) error {
-	if c.conn != nil && !c.IsClosed {
+	if c.Conn != nil && !c.IsClosed {
 		slog.Debug("发送消息", slog.String("body", msg))
-		return c.conn.WriteMessage(websocket.TextMessage, []byte(msg))
+		return c.Conn.WriteMessage(websocket.TextMessage, []byte(msg))
 	}
 	return nil
 }
 
 func (c *Client) GetLocalAddr() string {
-	return c.conn.LocalAddr().String()
+	return c.Conn.LocalAddr().String()
 }
 func (c *Client) GetRemoteAddr() string {
-	return c.conn.RemoteAddr().String()
+	return c.Conn.RemoteAddr().String()
 }
 func (c *Client) Disconnect() {
 	if c.Connected {
@@ -191,9 +191,9 @@ func (c *Client) Disconnect() {
 			c.heartTicker.Stop()
 			c.heartTicker = nil
 		}
-		if c.conn != nil {
-			_ = c.conn.Close()
-			c.conn = nil
+		if c.Conn != nil {
+			_ = c.Conn.Close()
+			c.Conn = nil
 		}
 		c.Connected = false
 		slog.Debug("websocket已经断开！")

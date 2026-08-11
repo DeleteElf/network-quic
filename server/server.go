@@ -5,6 +5,7 @@ import (
 	"github.com/DeleteElf/zero-net/framework"
 	"github.com/DeleteElf/zero-net/framework/streams"
 	"github.com/DeleteElf/zero-net/framework/utils"
+	"github.com/DeleteElf/zero-net/stunhelper"
 	"github.com/quic-go/quic-go"
 	"log/slog"
 	"net"
@@ -23,10 +24,14 @@ type Stream struct {
 }
 
 type Server struct {
-	isAgent  bool
-	NetConn  net.PacketConn
-	listener *quic.Listener
-	Sockets  map[string]*streams.Socket
+	//stun服务地址
+	Stun string
+	//外网地址
+	ExternalAddress string
+	isAgent         bool
+	NetConn         net.PacketConn
+	listener        *quic.Listener
+	Sockets         map[string]*streams.Socket
 
 	lock sync.Mutex
 
@@ -110,6 +115,20 @@ func (s *Server) OnClosing() bool {
 
 func (s *Server) OnClosed() {
 	slog.Debug("服务端已经关闭")
+}
+
+func (s *Server) DetectStun(token string) {
+	if len(s.Stun) > 0 {
+		slog.Debug("配置了stun服务，正在准备探测！", slog.String("address", s.Stun))
+		cli := stunhelper.NewClient()
+		err := cli.Connect(s.Stun, token, s.NetConn)
+		if err == nil {
+			slog.Info("你的公网 IP 地址 :", slog.Any("ip", cli.ExternalAddress.IP))
+			slog.Info("你的公网映射端口 : ", slog.Int("port", cli.ExternalAddress.Port))
+			s.ExternalAddress = net.JoinHostPort(cli.ExternalAddress.IP.String(), strconv.Itoa(cli.ExternalAddress.Port))
+		}
+		cli.Close()
+	}
 }
 
 func (s *Server) StartListen(onDisconnect streams.SocketCallbackFunc) {

@@ -7,16 +7,21 @@ import (
 	"github.com/DeleteElf/zero-net/framework"
 	"github.com/DeleteElf/zero-net/framework/streams"
 	"github.com/DeleteElf/zero-net/framework/utils"
+	"github.com/DeleteElf/zero-net/stunhelper"
+	"github.com/quic-go/quic-go"
 	"log/slog"
 	"net"
+	"strconv"
 	"time"
-
-	"github.com/quic-go/quic-go"
 )
 
 // Client 客户端
 type Client struct {
 	Id string
+	//stun服务地址
+	Stun string
+	//外网地址
+	ExternalAddress string
 	//需要连接的服务端地址
 	ServerAddress string
 	netConn       net.PacketConn
@@ -35,6 +40,19 @@ func NewClient(addr string, id string) *Client {
 	cli.IsClosed = false
 	cli.SetOnCloseHandler(cli)
 	return cli
+}
+func (cli *Client) DetectStun(token string) {
+	if len(cli.Stun) > 0 {
+		slog.Debug("配置了stun服务，正在准备探测！", slog.String("address", cli.Stun))
+		client := stunhelper.NewClient()
+		err := client.Connect(cli.Stun, token, cli.netConn)
+		if err == nil {
+			slog.Info("你的公网 IP 地址 :", slog.Any("ip", client.ExternalAddress.IP))
+			slog.Info("你的公网映射端口 : ", slog.Int("port", client.ExternalAddress.Port))
+			cli.ExternalAddress = net.JoinHostPort(client.ExternalAddress.IP.String(), strconv.Itoa(client.ExternalAddress.Port))
+		}
+		client.Close()
+	}
 }
 
 func (cli *Client) CloseChannel(channelId int) bool {
