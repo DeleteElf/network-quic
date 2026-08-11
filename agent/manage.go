@@ -11,6 +11,7 @@ import (
 	"github.com/deleteelf/goframework/utils/jsonhelper"
 	"github.com/quic-go/quic-go"
 	"log/slog"
+	"net"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -192,9 +193,14 @@ func (mgr *ManagePlatform) ListenAgentConnect(onAcceptSocket, onDisconnect strea
 			}
 			if mgr.Agents[proxyInfo.Idx] == nil { //如果这个代理还没有连接，则进行连接
 				slog.Debug("正在连接代理授权地址...", slog.String("addr", proxyInfo.ProxyAddr), slog.Int("idx", proxyInfo.Idx))
-				conn, proxyAddr, err := streams.NewUdpSocketClient(proxyInfo.ProxyAddr)
+				conn, err := streams.NewUdpSocketClient()
 				if err != nil {
-					slog.Error("连接代理服务器失败", slog.Any("err", err))
+					slog.Error("创建UDP客户端失败", slog.Any("err", err))
+					continue
+				}
+				proxyAddr, err := net.ResolveUDPAddr(streams.STREAM_NETWORK_UDP, proxyInfo.ProxyAddr)
+				if err != nil {
+					slog.Error("解析代理中心地址失败", slog.Any("err", err))
 					continue
 				}
 				agent, err := NewAgentService(conn, proxyAddr, uint32(proxyInfo.Idx), 1, mgr.config)

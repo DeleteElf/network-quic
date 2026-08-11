@@ -308,6 +308,11 @@ func ServerCreate(config *C.NetworkData) C.int {
 		return C.ErrorParam
 	}
 	serverCtx = server.NewServerByAddress(address) //尝试连接本机服务
+	if jsonObject["stun"] != nil {
+		stun := jsonObject["stun"].(string)
+		serverCtx.Stun = stun
+		serverCtx.DetectStun(jsonObject["token"].(string))
+	}
 	serverCtx.OnAcceptSocket = func(sock *streams.Socket) {
 		socketMap[sock.Id] = sock
 		if onAcceptSocket != nil {

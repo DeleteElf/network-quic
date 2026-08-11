@@ -11,7 +11,6 @@ import (
 	"github.com/quic-go/quic-go"
 	"log/slog"
 	"net"
-	"strconv"
 	"time"
 )
 
@@ -21,10 +20,11 @@ type Client struct {
 	//stun服务地址
 	Stun string
 	//外网地址
-	ExternalAddress string
+	ExternalIp   string
+	ExternalPort int
 	//需要连接的服务端地址
 	ServerAddress string
-	netConn       net.PacketConn
+	NetConn       net.PacketConn
 	netAddr       net.Addr
 	quicConn      *quic.Conn
 	Socket        *streams.Socket
@@ -45,11 +45,12 @@ func (cli *Client) DetectStun(token string) {
 	if len(cli.Stun) > 0 {
 		slog.Debug("配置了stun服务，正在准备探测！", slog.String("address", cli.Stun))
 		client := stunhelper.NewClient()
-		err := client.Connect(cli.Stun, token, cli.netConn)
+		err := client.Connect(cli.Stun, token, cli.NetConn)
 		if err == nil {
-			slog.Info("你的公网 IP 地址 :", slog.Any("ip", client.ExternalAddress.IP))
-			slog.Info("你的公网映射端口 : ", slog.Int("port", client.ExternalAddress.Port))
-			cli.ExternalAddress = net.JoinHostPort(client.ExternalAddress.IP.String(), strconv.Itoa(client.ExternalAddress.Port))
+			slog.Debug("你的公网 IP 地址 :", slog.Any("ip", client.ExternalAddress.IP))
+			slog.Debug("你的公网映射端口 : ", slog.Int("port", client.ExternalAddress.Port))
+			cli.ExternalIp = client.ExternalAddress.IP.String()
+			cli.ExternalPort = client.ExternalAddress.Port
 		}
 		client.Close()
 	}
@@ -71,8 +72,8 @@ func (cli *Client) OnClosing() bool {
 	if cli.quicConn != nil {
 		_ = cli.quicConn.CloseWithError(0, "close")
 	}
-	if cli.netConn != nil {
-		_ = cli.netConn.Close()
+	if cli.NetConn != nil {
+		_ = cli.NetConn.Close()
 	}
 	return true
 }
@@ -86,10 +87,15 @@ func (cli *Client) Connect(channelCount int, networkType string, onDisconnect st
 		return errors.New("暂时只支持udp连接！")
 	}
 	var err error
-	netConn, netAddr, err := streams.NewUdpSocketClient(cli.ServerAddress)
+	netConn, err := streams.NewUdpSocketClient()
 	if err != nil {
-		slog.Error("客户端连接服务器失败", slog.Any("err", err))
+		slog.Error("创建UDP客户端失败", slog.Any("err", err))
 		cli.Close()
+		return err
+	}
+	netAddr, err := net.ResolveUDPAddr(streams.STREAM_NETWORK_UDP, cli.ServerAddress)
+	if err != nil {
+		slog.Error("解析服务端地址失败", slog.Any("err", err))
 		return err
 	}
 	return cli.ConnectToNet(channelCount, netConn, netAddr, onDisconnect)
@@ -98,7 +104,7 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 	if cli.Socket != nil {
 		return errors.New("当前客户端已经连接！")
 	}
-	cli.netConn = conn
+	cli.NetConn = conn
 	cli.netAddr = addr
 	cli.Socket = streams.NewSocket(cli.Id, channelCount, onDisconnect)
 	tlsConfig := utils.GenTLSConfig()
@@ -108,12 +114,20 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 		MaxIdleTimeout:          10 * time.Second, // 默认30s，我们这边设置成10秒
 		KeepAlivePeriod:         3 * time.Second,  // 建议是 MaxIdleTimeout 的一半，或者更小的值
 		InitialPacketSize:       1500,             //当前最大数据包一个基础包的大小
-		DisablePathMTUDiscovery: true,
+		DisablePathMTUDiscovery: false,
 		Allow0RTT:               true,
 		// EnableDatagrams:    true,
 	}
 	slog.Debug("正在建立远程连接", slog.Any("ServerAddress", cli.netAddr))
-	quicConn, err := quic.Dial(context.TODO(), cli.netConn, cli.netAddr, tlsConfig, quicConfig)
+	if len(cli.Stun) > 0 {
+		go func() {
+			for i := 0; i < 10; i++ {
+				cli.NetConn.WriteTo([]byte("{\"action\":\"ping\",\"from\":\"iceClient\"}"), addr)
+				time.Sleep(100 * time.Millisecond)
+			}
+		}()
+	}
+	quicConn, err := quic.Dial(context.TODO(), cli.NetConn, cli.netAddr, tlsConfig, quicConfig)
 
 	if err != nil {
 		slog.Info("远程连接失败！", slog.Any("err", err))
@@ -141,7 +155,7 @@ func (cli *Client) ConnectToAgent(channelCount int, conn net.PacketConn, addr ne
 	if cli.Socket != nil {
 		return // errors.New("当前客户端已经连接！")
 	}
-	cli.netConn = conn
+	cli.NetConn = conn
 	cli.netAddr = addr
 
 	tlsConfig := utils.GenTLSConfig()
@@ -156,7 +170,7 @@ func (cli *Client) ConnectToAgent(channelCount int, conn net.PacketConn, addr ne
 		// EnableDatagrams:    true,
 	}
 	slog.Debug("正在通过代理建立远程连接", slog.Any("ServerAddress", cli.netAddr))
-	quicConn, err := quic.Dial(context.TODO(), cli.netConn, cli.netAddr, tlsConfig, quicConfig)
+	quicConn, err := quic.Dial(context.TODO(), cli.NetConn, cli.netAddr, tlsConfig, quicConfig)
 	if err != nil {
 		slog.Info("远程连接失败！", slog.Any("err", err))
 		return

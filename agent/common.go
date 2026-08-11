@@ -96,8 +96,14 @@ func NewAgentService(conn net.PacketConn, proxyAddr net.Addr, idx uint32, flag b
 
 // NewAgent 创建新的客户端代理
 func NewAgent(addr string, idx uint32, flag byte, config *Config) (*Agent, error) {
-	conn, proxyAddr, err := streams.NewUdpSocketClient(addr)
+	conn, err := streams.NewUdpSocketClient()
 	if err != nil {
+		slog.Error("创建UDP客户端失败", slog.Any("err", err))
+		return nil, err
+	}
+	proxyAddr, err := net.ResolveUDPAddr(streams.STREAM_NETWORK_UDP, addr)
+	if err != nil {
+		slog.Error("解析代理地址失败", slog.Any("err", err))
 		return nil, err
 	}
 	return NewAgentService(conn, proxyAddr, idx, flag, config)

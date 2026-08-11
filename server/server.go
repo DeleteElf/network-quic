@@ -27,11 +27,13 @@ type Server struct {
 	//stun服务地址
 	Stun string
 	//外网地址
-	ExternalAddress string
-	isAgent         bool
-	NetConn         net.PacketConn
-	listener        *quic.Listener
-	Sockets         map[string]*streams.Socket
+	ExternalIp   string
+	ExternalPort int
+
+	isAgent  bool
+	NetConn  net.PacketConn
+	listener *quic.Listener
+	Sockets  map[string]*streams.Socket
 
 	lock sync.Mutex
 
@@ -123,9 +125,10 @@ func (s *Server) DetectStun(token string) {
 		cli := stunhelper.NewClient()
 		err := cli.Connect(s.Stun, token, s.NetConn)
 		if err == nil {
-			slog.Info("你的公网 IP 地址 :", slog.Any("ip", cli.ExternalAddress.IP))
-			slog.Info("你的公网映射端口 : ", slog.Int("port", cli.ExternalAddress.Port))
-			s.ExternalAddress = net.JoinHostPort(cli.ExternalAddress.IP.String(), strconv.Itoa(cli.ExternalAddress.Port))
+			slog.Debug("你的公网 IP 地址 :", slog.Any("ip", cli.ExternalAddress.IP))
+			slog.Debug("你的公网映射端口 : ", slog.Int("port", cli.ExternalAddress.Port))
+			s.ExternalIp = cli.ExternalAddress.IP.String()
+			s.ExternalPort = cli.ExternalAddress.Port
 		}
 		cli.Close()
 	}
@@ -136,15 +139,19 @@ func (s *Server) StartListen(onDisconnect streams.SocketCallbackFunc) {
 	quicConfig := &quic.Config{
 		// MaxIncomingStreams: 0xffffffffffff, // 最大默认stream输入，默认100
 		HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
-		MaxIdleTimeout:          30 * time.Second, // 默认30s
+		MaxIdleTimeout:          10 * time.Second, // 默认30s
 		KeepAlivePeriod:         3 * time.Second,  // 建议是 MaxIdleTimeout 的一半，或者更小的值
 		InitialPacketSize:       1500,             //初始包大小
-		DisablePathMTUDiscovery: true,
+		DisablePathMTUDiscovery: false,            // 允许路径 MTU 探索
 		Allow0RTT:               true,
 	}
-
+	// 4. 构建 quic.Transport（复用刚刚创建的底层 conn）
+	tr := &quic.Transport{
+		Conn: s.NetConn,
+	}
 	var err error
-	s.listener, err = quic.Listen(s.NetConn, tlsConfig, quicConfig)
+	s.listener, err = tr.Listen(tlsConfig, quicConfig)
+	//s.listener, err = quic.Listen(s.NetConn, tlsConfig, quicConfig)
 	if err != nil {
 		slog.Error("启动服务监听发生错误！", slog.Any("err", err))
 		return

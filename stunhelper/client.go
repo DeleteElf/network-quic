@@ -7,12 +7,35 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type Client struct {
 	ExternalAddress stun.XORMappedAddress
+	LocalAddress    stun.XORMappedAddress
 	framework.CloseableObject
+}
+
+func GetLocalAddress(stunAddress string) string {
+	uri, err := stun.ParseURI(stunAddress)
+	if err != nil {
+		slog.Error("stun地址配置错误", slog.Any("err", err))
+		return ""
+	}
+	addr := net.JoinHostPort(uri.Host, strconv.Itoa(uri.Port))
+	serverAddr, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		slog.Error("stun地址解析失败！", slog.Any("err", err))
+		return ""
+	}
+	conn, err := net.DialUDP("udp", nil, serverAddr)
+	if err != nil {
+		slog.Error("连接目标服务器失败", slog.Any("err", err))
+		return ""
+	}
+	datas := strings.Split(conn.LocalAddr().String(), ":")
+	return datas[0]
 }
 
 func NewClient() *Client {
@@ -36,6 +59,7 @@ func (c *Client) Connect(address, token string, conn net.PacketConn) error {
 		stunAddr, err = net.ResolveUDPAddr("udp", addr)
 		netConn := NewNetPacketConnection(conn, stunAddr)
 		cli, err = stun.NewClient(netConn, stun.WithRTO(time.Second))
+		slog.Debug("本地局域网地址：", slog.String("ip", conn.LocalAddr().String()))
 	}
 	if err != nil {
 		//log.Fatalf("连接 STUN 服务器失败: %v", err)
@@ -49,15 +73,15 @@ func (c *Client) Connect(address, token string, conn net.PacketConn) error {
 	}
 	// 创建用于接收异步结果的 channel
 	resChan := make(chan stun.Event, 1)
+	// 2. 设置 1 秒超时 Context
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 	// 3. 发送请求并监听 STUN 服务器的响应
-	if err := cli.Do(message, func(res stun.Event) {
+	if err := cli.Start(message, func(res stun.Event) {
 		resChan <- res
 	}); err != nil {
 		return err
 	}
-	// 2. 设置 1 秒超时 Context
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
 	// 2. 阻塞等待：要么收到回调响应，要么 Context 超时/取消
 	select {
 	case res := <-resChan:

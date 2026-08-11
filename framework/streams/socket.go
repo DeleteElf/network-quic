@@ -18,28 +18,27 @@ type MessageCallbackFunc func(string)
 // SocketCallbackFunc socket事件回调
 type SocketCallbackFunc func(*Socket)
 
-func NewUdpSocketClient(serverAddr string) (*net.UDPConn, net.Addr, error) {
-	svrAddr, err := net.ResolveUDPAddr(STREAM_NETWORK_UDP, serverAddr)
-	if err != nil {
-		return nil, svrAddr, err
-	}
+func NewUdpSocketClient() (*net.UDPConn, error) {
+	//svrAddr, err := net.ResolveUDPAddr(STREAM_NETWORK_UDP, serverAddr)
+	//if err != nil {
+	//	return nil, svrAddr, err
+	//}
 	conn, err := net.ListenUDP(STREAM_NETWORK_UDP, nil)
 	if err != nil {
-		return nil, svrAddr, err
+		return nil, err
 	}
 	err = conn.SetReadBuffer(DefaultBufferSize)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	err = conn.SetWriteBuffer(DefaultBufferSize)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return conn, svrAddr, nil
+	return conn, nil
 }
 
 func NewUdpSocketServer(addr string) (net.PacketConn, error) {
-	var err error
 	config := net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
 			err := c.Control(func(fd uintptr) {
@@ -50,6 +49,7 @@ func NewUdpSocketServer(addr string) (net.PacketConn, error) {
 	}
 	config.SetMultipathTCP(false)
 	conn, err := config.ListenPacket(context.Background(), STREAM_NETWORK_UDP, addr)
+
 	if err != nil {
 		return nil, err
 	}
