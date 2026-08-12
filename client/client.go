@@ -145,12 +145,12 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 			Type:  int(cli.Socket.StreamChannels[i].Type), //这里需要告诉服务端，是什么类型的流
 		}
 		switch cli.Socket.StreamChannels[i].Type {
-		case streams.Video:
+		case streams.Video: //暂时内置参数
 			info.DataShards = 10
 			info.ParityShards = 3
 			cli.Socket.SetFecParam(i, info.DataShards, info.ParityShards)
 			break
-		case streams.Audio:
+		case streams.Audio: //暂时内置参数
 			info.DataShards = 4
 			info.ParityShards = 2
 			cli.Socket.SetFecParam(i, info.DataShards, info.ParityShards)
