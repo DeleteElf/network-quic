@@ -35,7 +35,8 @@ type Server struct {
 	listener *quic.Listener
 	Sockets  map[string]*streams.Socket
 
-	lock sync.Mutex
+	QuicConfig *quic.Config
+	lock       sync.Mutex
 
 	OnAcceptSocket       streams.SocketCallbackFunc
 	OnSocketDisConnected streams.SocketCallbackFunc
@@ -136,7 +137,7 @@ func (s *Server) DetectStun(token string) {
 
 func (s *Server) StartListen(onDisconnect streams.SocketCallbackFunc) {
 	tlsConfig := utils.GenTLSConfig()
-	quicConfig := &quic.Config{
+	s.QuicConfig = &quic.Config{
 		// MaxIncomingStreams: 0xffffffffffff, // 最大默认stream输入，默认100
 		HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
 		MaxIdleTimeout:          10 * time.Second, // 默认30s
@@ -144,13 +145,15 @@ func (s *Server) StartListen(onDisconnect streams.SocketCallbackFunc) {
 		InitialPacketSize:       1500,             //初始包大小
 		DisablePathMTUDiscovery: false,            // 允许路径 MTU 探索
 		Allow0RTT:               true,
+		EnableDatagrams:         true, //允许直接传输udp
 	}
 	// 4. 构建 quic.Transport（复用刚刚创建的底层 conn）
 	tr := &quic.Transport{
 		Conn: s.NetConn,
 	}
 	var err error
-	s.listener, err = tr.Listen(tlsConfig, quicConfig)
+	s.listener, err = tr.Listen(tlsConfig, s.QuicConfig)
+
 	//s.listener, err = quic.Listen(s.NetConn, tlsConfig, quicConfig)
 	if err != nil {
 		slog.Error("启动服务监听发生错误！", slog.Any("err", err))
@@ -195,11 +198,11 @@ func (s *Server) acceptConnection(quicConn *quic.Conn, onDisconnect streams.Sock
 			}
 			return
 		}
-		go s.processStream(stream, onDisconnect)
+		go s.processStream(quicConn, stream, onDisconnect)
 	}
 }
 
-func (s *Server) processStream(stream *quic.Stream, onDisconnect streams.SocketCallbackFunc) {
+func (s *Server) processStream(quicConn *quic.Conn, stream *quic.Stream, onDisconnect streams.SocketCallbackFunc) {
 	streamId := stream.StreamID()
 	info, err := streams.ReadStreamInfo(stream)
 	if err != nil {
@@ -229,10 +232,20 @@ func (s *Server) processStream(stream *quic.Stream, onDisconnect streams.SocketC
 				onDisconnect(sock)
 			}
 		})
+		socket.Conn = quicConn
 		s.Sockets[info.Id] = socket
 		if s.OnAcceptSocket != nil {
 			s.OnAcceptSocket(socket)
 		}
+		if s.QuicConfig.EnableDatagrams {
+			if socket.PacketPool == nil {
+				socket.PacketPool = socket.CreatePacketPool(s.QuicConfig.InitialPacketSize)
+			}
+			go socket.HandleChannelStreamDatagram()
+		}
+	}
+	if s.QuicConfig.EnableDatagrams && s.Sockets[info.Id].StreamChannels[info.Index].Encoder == nil {
+		s.Sockets[info.Id].SetFecParam(info.Index, info.DataShards, info.ParityShards)
 	}
 	s.lock.Unlock()
 	socket := s.Sockets[info.Id]

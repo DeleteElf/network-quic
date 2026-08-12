@@ -6,10 +6,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/DeleteElf/zero-net/framework/utils"
+	"github.com/quic-go/quic-go"
 	"log/slog"
 	"time"
+)
 
-	"github.com/quic-go/quic-go"
+type StreamType int
+
+const (
+	Control StreamType = iota
+	Audio
+	Video
+	Message
 )
 
 // signSalt, 使用 openssl rand -hex 32 生成，每个版本不一样，定期删除过旧的版本
@@ -20,14 +28,20 @@ const (
 	STREAM_NETWORK_TCP = "tcp"
 	STREAM_NETWORK_UDP = "udp"
 	DefaultBufferSize  = 7 * 1024 * 1024
+
+	STREAM_TYPE_NORMAL = 0 //普通数据流，我们走go的标准stream
+	STREAM_TYPE_FEC    = 1 //基于fec支持的数据流，我们使用普通的udp传输，并实现fec算法
 )
 
 type StreamInfo struct {
 	Id      string `json:"id"`
 	Version string `json:"v"` // 客户端的版本号
+	Type    int    `json:"type"`
+	Ts      int64  `json:"t"` // 用法见 ValidateStreamInfo
+	Sign    string `json:"s"` // 客户端的签名，用于服务端校验客户端的合法性
 
-	Ts   int64  `json:"t"` // 用法见 ValidateStreamInfo
-	Sign string `json:"s"` // 客户端的签名，用于服务端校验客户端的合法性
+	DataShards   int `json:"d"`
+	ParityShards int `json:"p"`
 
 	Index int `json:"i"`
 	Count int `json:"c"`

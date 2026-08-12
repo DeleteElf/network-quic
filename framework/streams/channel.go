@@ -1,15 +1,28 @@
 package streams
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"github.com/DeleteElf/zero-net/framework"
 	"github.com/DeleteElf/zero-net/framework/utils"
+	"github.com/klauspost/reedsolomon"
 	"github.com/quic-go/quic-go"
 	"io"
 	"log/slog"
 	"time"
 )
+
+// FECGroup 用于收集和组装同一 GroupID 的分片
+type FECGroup struct {
+	GroupID      uint64
+	DataShards   int
+	ParityShards int
+	Shards       [][]byte  // 槽位数组，长度为 DataShards + ParityShards
+	Received     int       // 当前已收到的有效分片数
+	CreatedAt    time.Time // 创建时间，用于过期清理
+}
 
 type StreamChannelOperating interface {
 	CreateChannels(count int)
@@ -36,24 +49,40 @@ type StreamChannel struct {
 	Buffer    *StreamChannelData
 	Stream    *quic.Stream
 
+	Type         StreamType
+	Encoder      reedsolomon.Encoder
+	FecGroups    map[uint64]*FECGroup
+	DataShards   int
+	ParityShards int
+
 	OnConnect    MessageChannelCallbackFunc
 	OnDisconnect MessageChannelCallbackFunc
 
 	framework.CloseableObject
 }
 
-func NewStreamChannel(id string, index int) *StreamChannel {
-	slog.Debug("正在创建通道", slog.String("id", id), slog.Int("ChannelId", index))
+// NewStreamChannelType 创新数据通道，并确定传输类型
+// id 数据通道的编号
+// index 数据通道的索引
+// _type 数据通道的类型
+func NewStreamChannelType(id string, index int, t StreamType) *StreamChannel {
+	slog.Debug("正在创建通道", slog.String("id", id), slog.Int("ChannelId", index), slog.Any("Type", t))
 	sc := &StreamChannel{
 		Channel:   make(chan StreamChannelData),
 		ClientId:  id,
 		ChannelId: index,
+		Type:      t,
+		FecGroups: make(map[uint64]*FECGroup), //初始化空的分组队列
 		CloseableObject: framework.CloseableObject{
 			IsClosed: false,
 		},
 	}
 	sc.SetOnCloseHandler(sc)
 	return sc
+}
+
+func NewStreamChannel(id string, index int) *StreamChannel {
+	return NewStreamChannelType(id, index, StreamType(index))
 }
 
 func (sc *StreamChannel) OnClosing() bool {
@@ -154,9 +183,48 @@ func (sc *StreamChannel) Send(data []byte) (bool, error) {
 	if sc.IsClosed {
 		return false, nil
 	}
+
 	if sc.Stream == nil {
 		return false, nil
 	}
 	err := utils.WriteStreamByHeaderUShort(sc.Stream, data)
 	return err == nil, err
+}
+
+func (sc *StreamChannel) FecDecode(packet *FECPacket) (frame []byte, err error) {
+	totalShards := packet.DataShards + packet.ParityShards
+	if packet.ShardIdx >= totalShards {
+		return nil, fmt.Errorf("无效的shard索引: %d", packet.ShardIdx)
+	}
+	group, exists := sc.FecGroups[packet.GroupId]
+	if !exists {
+		group = &FECGroup{
+			GroupID: packet.GroupId, DataShards: packet.DataShards, ParityShards: packet.ParityShards,
+			Shards:   make([][]byte, totalShards),
+			Received: 0, CreatedAt: time.Now(),
+		}
+		sc.FecGroups[packet.GroupId] = group
+	}
+	// 3. 去重与填槽
+	if group.Shards[packet.ShardIdx] == nil {
+		group.Shards[packet.ShardIdx] = packet.Payload
+		group.Received++
+	}
+	// 4. 判定：如果不满足解包门槛，继续等待下一个包
+	if group.Received < group.DataShards {
+		return nil, nil // 条件不足，暂无法解码
+	}
+	// 关键优化：使用 ReconstructData 仅恢复数据分片，比 Reconstruct 省时省 CPU
+	err = sc.Encoder.ReconstructData(group.Shards)
+	if err != nil {
+		return nil, fmt.Errorf("fec reconstruct failed: %w", err)
+	}
+
+	var frameBuf bytes.Buffer
+	//for _, shard := range group.Shards {
+	//	frameBuf.Write(shard)
+	//}
+	sc.Encoder.Join(&frameBuf, group.Shards, packet.Total)
+	delete(sc.FecGroups, group.GroupID)
+	return frameBuf.Bytes(), nil
 }

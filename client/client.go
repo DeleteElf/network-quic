@@ -26,8 +26,8 @@ type Client struct {
 	ServerAddress string
 	NetConn       net.PacketConn
 	netAddr       net.Addr
-	quicConn      *quic.Conn
-	Socket        *streams.Socket
+	//quicConn      *quic.Conn
+	Socket *streams.Socket
 	framework.CloseableObject
 }
 
@@ -69,9 +69,6 @@ func (cli *Client) OnClosing() bool {
 		cli.Socket = nil
 		slog.Debug("客户端的socket已关闭！")
 	}
-	if cli.quicConn != nil {
-		_ = cli.quicConn.CloseWithError(0, "close")
-	}
 	if cli.NetConn != nil {
 		_ = cli.NetConn.Close()
 	}
@@ -106,7 +103,7 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 	}
 	cli.NetConn = conn
 	cli.netAddr = addr
-	cli.Socket = streams.NewSocket(cli.Id, channelCount, onDisconnect)
+
 	tlsConfig := utils.GenTLSConfig()
 	quicConfig := &quic.Config{
 		MaxIncomingStreams:      0xffffffffffff,   // 最大默认stream输入，默认100
@@ -116,83 +113,67 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 		InitialPacketSize:       1500,             //当前最大数据包一个基础包的大小
 		DisablePathMTUDiscovery: false,
 		Allow0RTT:               true,
-		// EnableDatagrams:    true,
+		EnableDatagrams:         true,
 	}
-	slog.Debug("正在建立远程连接", slog.Any("ServerAddress", cli.netAddr))
+	slog.Debug("正在远程连接", slog.Any("ServerAddress", cli.netAddr))
 	if len(cli.Stun) > 0 {
 		go func() {
 			for i := 0; i < 10; i++ {
-				cli.NetConn.WriteTo([]byte("{\"action\":\"ping\",\"from\":\"iceClient\"}"), addr)
+				_, _ = cli.NetConn.WriteTo([]byte("{\"action\":\"ping\",\"from\":\"iceClient\"}"), addr)
 				time.Sleep(100 * time.Millisecond)
 			}
 		}()
 	}
 	quicConn, err := quic.Dial(context.TODO(), cli.NetConn, cli.netAddr, tlsConfig, quicConfig)
-
 	if err != nil {
 		slog.Info("远程连接失败！", slog.Any("err", err))
-		cli.Close()
 		return err
 	}
-	cli.quicConn = quicConn
-	info := streams.StreamInfo{
-		Id:    cli.Id,
-		Count: channelCount,
-		Ts:    time.Now().Unix(),
+	cli.Socket = streams.NewSocket(cli.Id, channelCount, onDisconnect)
+	cli.Socket.Conn = quicConn
+	if cli.Socket.ChannelCount == 4 { //如果创建4个流，我们第4个流也是视频流，目前的版本暂时只有3个流
+		cli.Socket.StreamChannels[3].Type = streams.Video
 	}
+
+	slog.Info("客户端连接成功！", slog.Int("通道数", cli.Socket.ChannelCount))
 	for i := 0; i < channelCount; i++ {
-		info.Index = i
-		stream, err := streams.CreateStream(quicConn, info) //创建并打开流
+		info := streams.StreamInfo{
+			Id:    cli.Id,
+			Count: channelCount,
+			Ts:    time.Now().Unix(),
+			Index: i,
+			Type:  int(cli.Socket.StreamChannels[i].Type), //这里需要告诉服务端，是什么类型的流
+		}
+		switch cli.Socket.StreamChannels[i].Type {
+		case streams.Video:
+			info.DataShards = 10
+			info.ParityShards = 3
+			cli.Socket.SetFecParam(i, info.DataShards, info.ParityShards)
+			break
+		case streams.Audio:
+			info.DataShards = 4
+			info.ParityShards = 2
+			cli.Socket.SetFecParam(i, info.DataShards, info.ParityShards)
+			break
+		default:
+			break
+		}
+
+		stream, err := streams.CreateStream(cli.Socket.Conn, info) //创建并打开流
 		if err != nil {
 			cli.Close()
 			return err
 		}
 		go cli.Socket.HandleChannelStreamData(i, stream)
 	}
-	return nil
-}
-func (cli *Client) ConnectToAgent(channelCount int, conn net.PacketConn, addr net.Addr, onDisconnect streams.SocketCallbackFunc) {
-	if cli.Socket != nil {
-		return // errors.New("当前客户端已经连接！")
-	}
-	cli.NetConn = conn
-	cli.netAddr = addr
-
-	tlsConfig := utils.GenTLSConfig()
-	quicConfig := &quic.Config{
-		MaxIncomingStreams:      0xffffffffffff,   // 最大默认stream输入，默认100
-		HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
-		MaxIdleTimeout:          10 * time.Second, // 默认30s，我们这边设置成10秒
-		KeepAlivePeriod:         3 * time.Second,  // 建议是 MaxIdleTimeout 的一半，或者更小的值
-		InitialPacketSize:       1500,             //当前最大数据包一个基础包的大小
-		DisablePathMTUDiscovery: true,
-		Allow0RTT:               true,
-		// EnableDatagrams:    true,
-	}
-	slog.Debug("正在通过代理建立远程连接", slog.Any("ServerAddress", cli.netAddr))
-	quicConn, err := quic.Dial(context.TODO(), cli.NetConn, cli.netAddr, tlsConfig, quicConfig)
-	if err != nil {
-		slog.Info("远程连接失败！", slog.Any("err", err))
-		return
-	}
-	cli.quicConn = quicConn
-
-	cli.Socket = streams.NewSocket(cli.Id, channelCount, onDisconnect)
-	slog.Info("客户端连接成功！", slog.Int("通道数", cli.Socket.ChannelCount))
-	info := streams.StreamInfo{
-		Id:    cli.Id,
-		Count: channelCount,
-		Ts:    time.Now().Unix(),
-	}
-	for i := 0; i < channelCount; i++ {
-		info.Index = i
-		stream, err := streams.CreateStream(cli.quicConn, info) //创建并打开流
-		if err != nil {
-			cli.Close()
-			return
+	if quicConfig.EnableDatagrams {
+		if cli.Socket.PacketPool == nil {
+			cli.Socket.PacketPool = cli.Socket.CreatePacketPool(quicConfig.InitialPacketSize)
 		}
-		go cli.Socket.HandleChannelStreamData(i, stream)
+
+		go cli.Socket.HandleChannelStreamDatagram()
 	}
+	return nil
 }
 
 func (cli *Client) Send(channleId int, data []byte) (bool, error) {
@@ -205,36 +186,3 @@ func (cli *Client) Send(channleId int, data []byte) (bool, error) {
 	return cli.Socket.Send(channleId, data)
 
 }
-
-//func (cli *Client) processStream(stream *quic.Stream, onDisconnect streams.SocketCallbackFunc) {
-//	streamId := stream.StreamID()
-//	info, err := streams.ReadStreamInfo(stream)
-//	if err != nil {
-//		slog.Error("获取流信息失败", slog.Any("streamId", streamId), slog.Any("err", err))
-//		_ = streams.CloseStream(stream)
-//		return
-//	}
-//	if err := streams.ValidateStreamInfo(info); err != nil {
-//		slog.Warn("无效的流信息", slog.Any("err", err))
-//		_ = streams.CloseStream(stream)
-//		return
-//	}
-//	if info.Index < 0 || info.Index >= cli.Socket.ChannelCount {
-//		slog.Error("无效的通道", slog.Any("chn", info.Index))
-//		_ = streams.CloseStream(stream)
-//		return
-//	}
-//	slog.Info("启动通道通讯", slog.Int("chn", info.Index), slog.Any("streamId", streamId), slog.String("clientId", info.Id))
-//	go cli.Socket.HandleChannelStreamData(info.Index, stream)
-//}
-
-//func (cli *Client) waitConn() *quic.Conn {
-//	for i := 0; i < 200; i++ {
-//		tmp := cli.quicConn
-//		if tmp != nil {
-//			return tmp
-//		}
-//		time.Sleep(16 * time.Millisecond)
-//	}
-//	return nil
-//}

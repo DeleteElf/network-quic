@@ -158,7 +158,7 @@ func ClientConnect(channelCount C.int, config *C.NetworkData) C.int {
 		agt, err := agent.NewAgent(clientCtx.ServerAddress, uint32(proxy.Idx), 0, cfg)
 		if err == nil && agt != nil {
 			sock := agt.Socket
-			clientCtx.ConnectToAgent(3, sock, agt.RemoteAddress, func(sock *streams.Socket) {
+			clientCtx.ConnectToNet(3, sock, agt.RemoteAddress, func(sock *streams.Socket) {
 				if agt.Socket != nil {
 					slog.Debug("正在与代理断开连接...")
 					_ = agt.Socket.Close()

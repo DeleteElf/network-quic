@@ -43,7 +43,22 @@ func messageHandler(sock *streams.Socket, channelIndex int) {
 		msg := string(currentBuffer.Data)
 		slog.Debug("收到数据：", slog.Int("channelId", currentBuffer.ChannelId), slog.String("msg", msg),
 			slog.String("clientId", currentBuffer.ClientId))
-		if msg == "bye" {
+		if msg == "hello" {
+			template := "这是一条测试数据，我们需要用来测试一下 fec的功能是否正常，因此，我们会不断地评价它！！！"
+			result := ""
+			if sock.StreamChannels[channelIndex].Encoder != nil {
+				for index := 0; index < 10; index++ {
+					result = result + template
+					data := []byte(result)
+					slog.Debug("正在向客户端发送fec数据包", slog.Int("channelId", currentBuffer.ChannelId),
+						slog.Int("数据长度:", len(data)), slog.String("msg", result))
+					err := sock.SendFecDatagram(channelIndex, int64(index), data)
+					if err != nil {
+						return
+					}
+				}
+			}
+		} else if msg == "bye" {
 			slog.Debug("收到结束会话命令！")
 			_ = testServer.CloseSocket(sock.Id)
 		} else if msg == "shutdown" {
@@ -70,7 +85,6 @@ var testServer *server.Server
 func TestServer(t *testing.T) {
 	utils.InitLog(slog.LevelDebug, nil)                     //初始化日志
 	testServer = server.NewServerByAddress("0.0.0.0:10001") //尝试连接本机服务
-	//svr := server.NewServerByPort(10001, false) //尝试连接本机服务
 	for {
 		if restart {
 			time.Sleep(1 * time.Second)
