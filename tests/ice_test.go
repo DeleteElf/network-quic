@@ -127,7 +127,7 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 
 		tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 		httpClient := &http.Client{Transport: tr}
-		request, err := http.NewRequest(http.MethodPost, "https://192.168.199.159:3005/ice?device_id=0A76DE8C-1AB1-35C3-A137-FC9E10B1EF9F",
+		request, err := http.NewRequest(http.MethodPost, "https://36.249.161.74:3005/ice?device_id=0A76DE8C-1AB1-35C3-A137-FC9E10B1EF9F",
 			bytes.NewBufferString(jsonData))
 		if err != nil {
 			slog.Error("生成http出错！", slog.Any("err", err))
@@ -281,7 +281,8 @@ func TestIceServer(t *testing.T) {
 		}
 	}
 	go func() {
-		err := ws.Connect("wss://192.168.199.159:3005/device?type=device&apikey=575D6618206A2754", websocket.DefaultHeartMessage)
+		//err := ws.Connect("wss://192.168.199.159:3005/device?type=device&apikey=575D6618206A2754", websocket.DefaultHeartMessage)
+		err := ws.Connect("wss://36.249.161.74:3005/device?type=device&apikey=575D6618206A2754", websocket.DefaultHeartMessage)
 		if err != nil {
 			slog.Error("连接发生错误", slog.Any("err", err))
 		}
