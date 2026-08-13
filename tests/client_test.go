@@ -53,7 +53,7 @@ func TestClient(t *testing.T) {
 		InitialPacketSize:       1200,             //当前最大数据包一个基础包的大小
 		DisablePathMTUDiscovery: false,
 		Allow0RTT:               true,
-		EnableDatagrams:         false,
+		EnableDatagrams:         true,
 	}
 	err := cli.Connect(3, streams.STREAM_NETWORK_UDP, func(sock *streams.Socket) {
 		slog.Debug("socket已经断开===》！", slog.String("clientId", sock.Id))

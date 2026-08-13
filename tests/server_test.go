@@ -124,7 +124,7 @@ func TestServer(t *testing.T) {
 			InitialPacketSize:       1200,             //初始包大小
 			DisablePathMTUDiscovery: false,            // 允许路径 MTU 探索
 			Allow0RTT:               true,
-			EnableDatagrams:         false, //允许直接传输udp
+			EnableDatagrams:         true, //允许直接传输udp
 		}
 		testServer.StartListen(func(sock *streams.Socket) {
 			slog.Debug("客户端断开连接：", slog.String("id", sock.Id))
