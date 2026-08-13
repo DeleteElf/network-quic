@@ -19,6 +19,7 @@ type FECGroup struct {
 	GroupID      uint64
 	DataShards   int
 	ParityShards int
+	Total        int
 	Shards       [][]byte  // 槽位数组，长度为 DataShards + ParityShards
 	Received     int       // 当前已收到的有效分片数
 	CreatedAt    time.Time // 创建时间，用于过期清理
@@ -54,6 +55,7 @@ type StreamChannel struct {
 	FecGroups    map[uint64]*FECGroup
 	DataShards   int
 	ParityShards int
+	NextGroupId  uint64
 
 	OnConnect    MessageChannelCallbackFunc
 	OnDisconnect MessageChannelCallbackFunc
@@ -191,16 +193,16 @@ func (sc *StreamChannel) Send(data []byte) (bool, error) {
 	return err == nil, err
 }
 
-func (sc *StreamChannel) FecDecode(packet *FECPacket) (frame []byte, err error) {
+func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 	totalShards := packet.DataShards + packet.ParityShards
 	if packet.ShardIdx >= totalShards {
-		return nil, fmt.Errorf("无效的shard索引: %d", packet.ShardIdx)
+		return fmt.Errorf("无效的shard索引: %d", packet.ShardIdx)
 	}
 	group, exists := sc.FecGroups[packet.GroupId]
 	if !exists {
 		group = &FECGroup{
 			GroupID: packet.GroupId, DataShards: packet.DataShards, ParityShards: packet.ParityShards,
-			Shards:   make([][]byte, totalShards),
+			Shards: make([][]byte, totalShards), Total: packet.Total,
 			Received: 0, CreatedAt: time.Now(),
 		}
 		sc.FecGroups[packet.GroupId] = group
@@ -211,20 +213,31 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) (frame []byte, err error) 
 		group.Received++
 	}
 	// 4. 判定：如果不满足解包门槛，继续等待下一个包
-	if group.Received < group.DataShards {
-		return nil, nil // 条件不足，暂无法解码
+	for {
+		next, exists := sc.FecGroups[sc.NextGroupId]
+		if exists && next.Received >= next.DataShards {
+			// 关键优化：使用 ReconstructData 仅恢复数据分片，比 Reconstruct 省时省 CPU
+			err := sc.Encoder.ReconstructData(next.Shards)
+			if err != nil {
+				return fmt.Errorf("fec reconstruct failed: %w", err)
+			}
+			var frameBuf bytes.Buffer
+			err = sc.Encoder.Join(&frameBuf, next.Shards, next.Total)
+			if err != nil {
+				return err
+			}
+			if sc.Channel != nil {
+				delete(sc.FecGroups, next.GroupID)
+				sc.NextGroupId++
+				sc.Channel <- StreamChannelData{
+					ClientId:  sc.ClientId,
+					ChannelId: sc.ChannelId,
+					Offset:    0,
+					Data:      frameBuf.Bytes(),
+				}
+			}
+		} else {
+			return nil
+		}
 	}
-	// 关键优化：使用 ReconstructData 仅恢复数据分片，比 Reconstruct 省时省 CPU
-	err = sc.Encoder.ReconstructData(group.Shards)
-	if err != nil {
-		return nil, fmt.Errorf("fec reconstruct failed: %w", err)
-	}
-
-	var frameBuf bytes.Buffer
-	//for _, shard := range group.Shards {
-	//	frameBuf.Write(shard)
-	//}
-	sc.Encoder.Join(&frameBuf, group.Shards, packet.Total)
-	delete(sc.FecGroups, group.GroupID)
-	return frameBuf.Bytes(), nil
 }

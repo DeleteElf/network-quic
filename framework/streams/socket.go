@@ -272,6 +272,7 @@ func (s *Socket) HandleChannelStreamDatagram() {
 	ctx, cancel := context.WithCancel(s.Context)
 	defer cancel()
 	slog.Info("开始接收 FEC Datagram 数据流...")
+	isFirst := true
 	for {
 		if s.IsClosed {
 			return
@@ -286,6 +287,10 @@ func (s *Socket) HandleChannelStreamDatagram() {
 			slog.Error("接收 Datagram 发生错误，退出循环", slog.Any("err", err))
 			return
 		}
+		if isFirst {
+			slog.Debug("收到首个Datagram数据包！")
+			isFirst = false
+		}
 		packet := s.FecDecode(data)
 		if packet != nil {
 			sc := s.StreamChannels[packet.ChannelId]
@@ -295,21 +300,10 @@ func (s *Socket) HandleChannelStreamDatagram() {
 			if sc.Channel == nil {
 				return
 			}
-			buf, err := sc.FecDecode(packet)
+			err = sc.FecDecode(packet)
 			if err != nil {
 				slog.Error("解码fec过程发生错误", slog.Any("err", err))
 				return
-			}
-			if buf != nil {
-				if sc.Channel == nil {
-					return
-				}
-				sc.Channel <- StreamChannelData{
-					ClientId:  sc.ClientId,
-					ChannelId: sc.ChannelId,
-					Offset:    0,
-					Data:      buf,
-				}
 			}
 		}
 	}

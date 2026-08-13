@@ -9,7 +9,6 @@ import (
 	"github.com/quic-go/quic-go"
 	"log/slog"
 	"net"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,38 +51,6 @@ func NewServerByAddress(address string) *Server {
 		return nil
 	}
 	return NewServer(netConn, false)
-}
-
-// NewServerByPort 创建新的服务实例，并默认监听 0.0.0.0
-func NewServerByPort(port int) *Server {
-	return NewServerByAddress("0.0.0.0:" + strconv.Itoa(port))
-}
-
-func NewAgentServer(address string) *Server {
-	tlsConfig := utils.GenTLSConfig()
-	quicConfig := &quic.Config{
-		// MaxIncomingStreams: 0xffffffffffff, // 最大默认stream输入，默认100
-		HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
-		MaxIdleTimeout:          30 * time.Second, // 默认30s
-		KeepAlivePeriod:         3 * time.Second,  // 建议是 MaxIdleTimeout 的一半，或者更小的值
-		InitialPacketSize:       1200,             //初始包大小
-		DisablePathMTUDiscovery: true,
-		Allow0RTT:               true,
-	}
-	listener, err := quic.ListenAddr(address, tlsConfig, quicConfig) //这种写法，拿不到conn
-	if err != nil {
-		slog.Error("创建socket服务失败！", slog.Any("err", err))
-		return nil
-	}
-	svr := &Server{
-		isAgent: true,
-		//NetConn: conn,
-		listener: listener,
-		Sockets:  make(map[string]*streams.Socket),
-	}
-	svr.IsClosed = false
-	svr.SetOnCloseHandler(svr)
-	return svr
 }
 
 // NewServer 创建新的服务实例

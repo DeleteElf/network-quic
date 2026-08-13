@@ -6,6 +6,7 @@ import (
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/DeleteElf/zero-net/server"
 	"log/slog"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -45,14 +46,27 @@ func messageHandler(sock *streams.Socket, channelIndex int) {
 			slog.String("clientId", currentBuffer.ClientId))
 		if msg == "hello" {
 			template := "这是一条测试数据，我们需要用来测试一下 fec的功能是否正常，因此，我们会不断地评价它！！！"
-			result := ""
+			stringList := make([]string, 10)
 			if sock.StreamChannels[channelIndex].Encoder != nil {
+				result := ""
 				for index := 0; index < 10; index++ {
 					result = result + template
-					data := []byte(result)
+					stringList[index] = result
+					temp := strconv.Itoa(index) + ":" + result
+					data := []byte(temp)
 					slog.Debug("正在向客户端发送fec数据包", slog.Int("channelId", currentBuffer.ChannelId),
-						slog.Int("数据长度:", len(data)), slog.String("msg", result))
+						slog.Int("数据长度:", len(data)), slog.String("msg", temp))
 					err := sock.SendFecDatagram(channelIndex, int64(index), data)
+					if err != nil {
+						return
+					}
+				}
+				for i := 9; i >= 0; i-- {
+					temp := strconv.Itoa(i+10) + ":" + stringList[i]
+					data := []byte(temp)
+					slog.Debug("正在向客户端发送fec数据包", slog.Int("channelId", currentBuffer.ChannelId),
+						slog.Int("数据长度:", len(data)), slog.String("msg", temp))
+					err := sock.SendFecDatagram(channelIndex, int64(i+10), data)
 					if err != nil {
 						return
 					}

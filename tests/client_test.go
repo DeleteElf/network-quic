@@ -70,7 +70,7 @@ func TestClient(t *testing.T) {
 	slog.Info("正在向通道1发送数据", slog.String("msg", "hello"))
 
 	go func() {
-		time.Sleep(10 * time.Second)
+		time.Sleep(1 * time.Second)
 		msg0 := "hello,i am channel 0 data from client"
 		slog.Info("正在向通道0发送数据", slog.String("msg", msg0))
 		_, _ = cli.Socket.Send(0, []byte(msg0))
@@ -78,7 +78,7 @@ func TestClient(t *testing.T) {
 
 	//time.Sleep(time.Second * 3) //等待3秒，等他们通讯完成再退出
 	for {
-		time.Sleep(time.Second * 10)
+		time.Sleep(time.Second * 3)
 		if cli.IsClosed || cli.Socket == nil || cli.Socket.IsClosed {
 			break
 		} else {
