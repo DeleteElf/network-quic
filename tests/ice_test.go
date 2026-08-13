@@ -82,6 +82,14 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 		slog.Error("解析服务端地址失败", slog.Any("err", err))
 		return err
 	}
+	if len(cli.Stun) > 0 {
+		go func() {
+			for i := 0; i < 10; i++ {
+				_, _ = cli.NetConn.WriteTo([]byte("{\"action\":\"ping\",\"from\":\"iceClient\"}"), netAddr)
+				time.Sleep(20 * time.Millisecond)
+			}
+		}()
+	}
 	return cli.ConnectToNet(channelCount, cli.NetConn, netAddr, onDisconnect)
 }
 
@@ -95,7 +103,6 @@ func TestIceClient(t *testing.T) {
 	}) //创建udp网络
 
 	if err != nil {
-		slog.Error("客户端连接失败", slog.Any("err", err))
 		return
 	}
 	slog.Info("客户端连接成功！", slog.Int("通道数", cli.Socket.ChannelCount))
@@ -141,7 +148,6 @@ func TestIceServer(t *testing.T) {
 
 	testServer = server.NewServerByAddress("0.0.0.0:10001") //尝试连接本机服务
 	testServer.Stun = "stun:stun.new0.com.cn:3478"
-	testServer.DetectStun("test")
 
 	client.OnMessage = func(msg string) {
 		//slog.Info("收到新的消息", slog.String("msg", msg))
@@ -166,6 +172,7 @@ func TestIceServer(t *testing.T) {
 						}
 						localAddress, err := net.ResolveUDPAddr("udp", client.Conn.LocalAddr().String())
 						if err == nil {
+							testServer.DetectStun("test")
 							sdpBody["type"] = "answer"
 							sdpBody["sdp"] = "candidate:1 1 UDP 2130706431 " + testServer.ExternalIp + " " + strconv.Itoa(testServer.ExternalPort) + " typ srflx raddr " + localAddress.IP.String() + " rport 10001"
 							result["data"] = sdpBody
@@ -179,9 +186,9 @@ func TestIceServer(t *testing.T) {
 								addr := net.JoinHostPort(datas[4], datas[5])
 								clientAddr, err := net.ResolveUDPAddr(streams.STREAM_NETWORK_UDP, addr)
 								if err == nil {
-									for i := 0; i < 10; i++ {
+									for i := 0; i < 50; i++ {
 										testServer.NetConn.WriteTo([]byte("{\"action\":\"ping\",\"from\":\"ice\"}"), clientAddr)
-										time.Sleep(100 * time.Millisecond)
+										time.Sleep(20 * time.Millisecond)
 									}
 
 								}

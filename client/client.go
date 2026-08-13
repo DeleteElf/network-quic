@@ -116,14 +116,6 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 		EnableDatagrams:         true,
 	}
 	slog.Debug("正在远程连接", slog.Any("ServerAddress", cli.netAddr))
-	if len(cli.Stun) > 0 {
-		go func() {
-			for i := 0; i < 10; i++ {
-				_, _ = cli.NetConn.WriteTo([]byte("{\"action\":\"ping\",\"from\":\"iceClient\"}"), addr)
-				time.Sleep(100 * time.Millisecond)
-			}
-		}()
-	}
 	quicConn, err := quic.Dial(context.TODO(), cli.NetConn, cli.netAddr, tlsConfig, quicConfig)
 	if err != nil {
 		slog.Info("远程连接失败！", slog.Any("err", err))
