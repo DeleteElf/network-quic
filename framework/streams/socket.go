@@ -43,7 +43,7 @@ func NewUdpSocketClient() (*net.UDPConn, error) {
 	//if err != nil {
 	//	return nil, svrAddr, err
 	//}
-	conn, err := net.ListenUDP(STREAM_NETWORK_UDP, nil)
+	conn, err := net.ListenUDP(STREAM_NETWORK_UDP, &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
 		return nil, err
 	}

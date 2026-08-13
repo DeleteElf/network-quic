@@ -41,9 +41,10 @@ func PunchHoleAsync(conn net.PacketConn, targetAddr net.Addr) error {
 	slog.Info("客户端：开始异步向服务端盲发 UDP 包冲刷 NAT 洞口...", slog.String("target", targetAddr.String()))
 	go func() {
 		pingMsg := []byte("{\"action\":\"ping\",\"from\":\"ice-certification\"}")
+		udpConn := conn.(*net.UDPConn)
 		// 密集发送 20 个 UDP 包（持续 600ms），把客户端 NAT 防火墙对服务端的出口映射彻底打开
-		for i := 0; i < 200; i++ {
-			_, _ = conn.WriteTo(pingMsg, targetAddr)
+		for i := 0; i < 1000; i++ {
+			_, _ = udpConn.WriteToUDP(pingMsg, targetAddr.(*net.UDPAddr))
 			time.Sleep(30 * time.Millisecond)
 		}
 		slog.Debug("客户端：NAT 出口冲刷完成！")
@@ -54,7 +55,7 @@ func PunchHoleAsync(conn net.PacketConn, targetAddr net.Addr) error {
 // 【客户端打洞】：持续向服务端发包开洞，并等待服务端的回应
 func PunchHole(conn net.PacketConn, targetAddr net.Addr, timeout time.Duration) error {
 	slog.Info("客户端：开始与目标服务器进行 UDP 双向打洞...", slog.String("target", targetAddr.String()))
-
+	udpConn := conn.(*net.UDPConn)
 	_ = conn.SetReadDeadline(time.Now().Add(timeout))
 	defer conn.SetReadDeadline(time.Time{})
 
@@ -71,14 +72,14 @@ func PunchHole(conn net.PacketConn, targetAddr net.Addr, timeout time.Duration) 
 			case <-stopChan:
 				return
 			case <-ticker.C:
-				_, _ = conn.WriteTo(pingMsg, targetAddr)
+				_, _ = udpConn.WriteToUDP(pingMsg, targetAddr.(*net.UDPAddr))
 			}
 		}
 	}()
 
 	// 2. 阻塞接收服务端的打洞包
 	for {
-		n, addr, err := conn.ReadFrom(buf)
+		n, addr, err := udpConn.ReadFromUDP(buf)
 		if err != nil {
 			close(stopChan)
 			return fmt.Errorf("客户端打洞超时/失败: %w", err)
@@ -164,13 +165,11 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 		return err
 	}
 	if len(cli.Stun) > 0 {
-		err = PunchHole(cli.NetConn, netAddr, 5*time.Second)
+		err = PunchHole(cli.NetConn, netAddr, 15*time.Second)
 		if err != nil {
 			slog.Error("UDP 打洞失败，放弃 QUIC 连接", slog.Any("err", err))
 			return err
 		}
-		// 2. 稍微等待 200ms，让双方的打洞 UDP 包在公网路上“相遇”并建立 NAT 映射轨
-		time.Sleep(200 * time.Millisecond)
 	}
 	//return cli.ConnectToNet(channelCount, cli.NetConn, netAddr, onDisconnect)
 	return nil
@@ -209,8 +208,9 @@ func TestIceClient(t *testing.T) {
 		if cli.IsClosed || cli.Socket.IsClosed {
 			break
 		} else {
+			time.Sleep(time.Second * 10)
 			_, _ = cli.Socket.Ping(0)
-			time.Sleep(time.Millisecond * 10)
+
 		}
 	}
 }
@@ -237,7 +237,8 @@ func TestIceServer(t *testing.T) {
 	// ⚠️ 【关键修正】：确保 testServer.NetConn 不为 nil 后再调用 DetectStun
 	if testServer.NetConn == nil {
 		addr, _ := net.ResolveUDPAddr("udp", "0.0.0.0:10001")
-		testServer.NetConn, _ = net.ListenUDP("udp", addr)
+		conn, _ := net.ListenUDP("udp", addr)
+		testServer.NetConn = conn
 	}
 
 	remoteAddress, port := DetectStun(testServer.Stun, "test", testServer.NetConn)
@@ -308,6 +309,7 @@ func TestIceServer(t *testing.T) {
 		}
 	}()
 	buf := make([]byte, 65535) // UDP 数据包最大 Buffer
+	udpConn := testServer.NetConn.(*net.UDPConn)
 	for {
 		if restart {
 			time.Sleep(1 * time.Second)
@@ -319,7 +321,7 @@ func TestIceServer(t *testing.T) {
 		//})
 
 		// 直接从底层的 net.PacketConn 中读取原生 UDP 数据包
-		_, remoteAddr, err := testServer.NetConn.ReadFrom(buf)
+		_, remoteAddr, err := udpConn.ReadFromUDP(buf)
 		if testServer.IsClosed {
 			break
 		}
