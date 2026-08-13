@@ -58,7 +58,7 @@ func (c *Client) Connect(address, token string, conn net.PacketConn) error {
 		addr := net.JoinHostPort(uri.Host, strconv.Itoa(uri.Port))
 		stunAddr, err = net.ResolveUDPAddr("udp", addr)
 		netConn := NewNetPacketConnection(conn, stunAddr)
-		cli, err = stun.NewClient(netConn, stun.WithRTO(time.Second))
+		cli, err = stun.NewClient(netConn, stun.WithRTO(2*time.Second))
 		slog.Debug("本地局域网地址：", slog.String("ip", conn.LocalAddr().String()))
 	}
 	if err != nil {
@@ -74,7 +74,7 @@ func (c *Client) Connect(address, token string, conn net.PacketConn) error {
 	// 创建用于接收异步结果的 channel
 	resChan := make(chan stun.Event, 1)
 	// 2. 设置 1 秒超时 Context
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	// 3. 发送请求并监听 STUN 服务器的响应
 	if err := cli.Start(message, func(res stun.Event) {

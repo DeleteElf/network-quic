@@ -20,6 +20,21 @@ import (
 	"time"
 )
 
+func DetectStun(stun, token string, conn net.PacketConn) (string, int) {
+	if len(stun) > 0 {
+		slog.Debug("配置了stun服务，正在准备探测！", slog.String("address", stun))
+		cli := stunhelper.NewClient()
+		err := cli.Connect(stun, token, conn)
+		if err == nil {
+			slog.Debug("你的公网 IP 地址 :", slog.Any("ip", cli.ExternalAddress.IP))
+			slog.Debug("你的公网映射端口 : ", slog.Int("port", cli.ExternalAddress.Port))
+			return cli.ExternalAddress.IP.String(), cli.ExternalAddress.Port
+		}
+		//client.Close()
+	}
+	return "", 0
+}
+
 func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, onDisconnect streams.SocketCallbackFunc) error {
 	var err error
 	cli.NetConn, err = streams.NewUdpSocketClient()
@@ -31,11 +46,11 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 	serverAddress := cli.ServerAddress
 	if len(cli.Stun) > 0 { //如果配置了stun服务器
 		localIp := stunhelper.GetLocalAddress(cli.Stun)
-		cli.DetectStun(stunKey)
+		remoteAddress, port := DetectStun(cli.Stun, stunKey, cli.NetConn)
 		strs := strings.Split(cli.NetConn.LocalAddr().String(), ":")
 		data := jsonhelper.JsonObject{}
 		data["type"] = "offer"
-		data["sdp"] = "candidate:1 1 UDP 2130706431 " + cli.ExternalIp + " " + strconv.Itoa(cli.ExternalPort) + " typ srflx raddr " + localIp + " rport " + strs[len(strs)-1]
+		data["sdp"] = "candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localIp + " rport " + strs[len(strs)-1]
 		jsonData, err := jsonhelper.ToJsonString(data)
 		if err != nil {
 			slog.Error("转成json过程出错！", slog.Any("err", err))
@@ -146,9 +161,10 @@ func TestIceServer(t *testing.T) {
 		}
 	}
 
+	iceMessage := make(chan string)
 	testServer = server.NewServerByAddress("0.0.0.0:10001") //尝试连接本机服务
 	testServer.Stun = "stun:stun.new0.com.cn:3478"
-
+	remoteAddress, port := DetectStun(testServer.Stun, "test", testServer.NetConn)
 	client.OnMessage = func(msg string) {
 		//slog.Info("收到新的消息", slog.String("msg", msg))
 		//如果对方要求ice，则返回ice信息，同时向对方的ice发送一条消息
@@ -172,9 +188,9 @@ func TestIceServer(t *testing.T) {
 						}
 						localAddress, err := net.ResolveUDPAddr("udp", client.Conn.LocalAddr().String())
 						if err == nil {
-							testServer.DetectStun("test")
+
 							sdpBody["type"] = "answer"
-							sdpBody["sdp"] = "candidate:1 1 UDP 2130706431 " + testServer.ExternalIp + " " + strconv.Itoa(testServer.ExternalPort) + " typ srflx raddr " + localAddress.IP.String() + " rport 10001"
+							sdpBody["sdp"] = "candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localAddress.IP.String() + " rport 10001"
 							result["data"] = sdpBody
 							re, e := jsonhelper.ToJsonString(result)
 							if e == nil {
@@ -184,14 +200,7 @@ func TestIceServer(t *testing.T) {
 							if body["sdp"] != nil {
 								datas := strings.Split(body["sdp"].(string), " ")
 								addr := net.JoinHostPort(datas[4], datas[5])
-								clientAddr, err := net.ResolveUDPAddr(streams.STREAM_NETWORK_UDP, addr)
-								if err == nil {
-									for i := 0; i < 50; i++ {
-										testServer.NetConn.WriteTo([]byte("{\"action\":\"ping\",\"from\":\"ice\"}"), clientAddr)
-										time.Sleep(20 * time.Millisecond)
-									}
-
-								}
+								iceMessage <- addr
 							}
 						}
 						break
@@ -206,16 +215,35 @@ func TestIceServer(t *testing.T) {
 			slog.Error("连接发生错误", slog.Any("err", err))
 		}
 	}()
+	testServer.OnAcceptSocket = func(sock *streams.Socket) {
+		slog.Debug("新的客户端接入：", slog.String("id", sock.Id))
+		go socketHandler(sock)
+	}
+	go func() {
+		for {
+			select {
+			case addr := <-iceMessage:
+				slog.Debug("收到请求探测新的地址", slog.String("addr", addr))
+				if len(addr) > 10 {
+					clientAddr, err := net.ResolveUDPAddr(streams.STREAM_NETWORK_UDP, addr)
+					if err == nil {
+						for i := 0; i < 50; i++ {
+							testServer.NetConn.WriteTo([]byte("{\"action\":\"ping\",\"from\":\"ice\"}"), clientAddr)
+							time.Sleep(20 * time.Millisecond)
+						}
+
+					}
+				}
+				break
+			}
+		}
+	}()
 
 	for {
 		if restart {
 			time.Sleep(1 * time.Second)
 			slog.Debug("服务端重新启动监听！")
 			restart = false
-		}
-		testServer.OnAcceptSocket = func(sock *streams.Socket) {
-			slog.Debug("新的客户端接入：", slog.String("id", sock.Id))
-			go socketHandler(sock)
 		}
 		testServer.StartListen(func(sock *streams.Socket) {
 			slog.Debug("客户端断开连接：", slog.String("id", sock.Id))

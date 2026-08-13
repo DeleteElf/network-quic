@@ -131,7 +131,7 @@ func (s *Server) DetectStun(token string) {
 			s.ExternalIp = cli.ExternalAddress.IP.String()
 			s.ExternalPort = cli.ExternalAddress.Port
 		}
-		cli.Close()
+		//cli.Close()
 	}
 }
 
