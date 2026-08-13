@@ -46,7 +46,7 @@ func TestClient(t *testing.T) {
 	utils.InitLog(slog.LevelDebug, nil)                  //初始化日志
 	cli := client.NewClient("127.0.0.1:10001", "test01") //尝试连接本机服务
 	cli.Config = &quic.Config{
-		MaxIncomingStreams:      0xffffffffffff,   // 最大默认stream输入，默认100
+		//MaxIncomingStreams:      0xffffffffffff,   // 最大默认stream输入，默认100
 		HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
 		MaxIdleTimeout:          10 * time.Second, // 默认30s，我们这边设置成10秒
 		KeepAlivePeriod:         3 * time.Second,  // 建议是 MaxIdleTimeout 的一半，或者更小的值

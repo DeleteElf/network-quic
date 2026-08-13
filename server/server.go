@@ -110,10 +110,10 @@ func (s *Server) StartListen(onDisconnect streams.SocketCallbackFunc) {
 			HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
 			MaxIdleTimeout:          10 * time.Second, // 默认30s
 			KeepAlivePeriod:         3 * time.Second,  // 建议是 MaxIdleTimeout 的一半，或者更小的值
-			InitialPacketSize:       1200,             //初始包大小
+			InitialPacketSize:       1500,             //初始包大小
 			DisablePathMTUDiscovery: false,            // 允许路径 MTU 探索
 			Allow0RTT:               true,
-			EnableDatagrams:         true, //允许直接传输udp
+			EnableDatagrams:         false, //允许直接传输udp
 		}
 	}
 	// 4. 构建 quic.Transport（复用刚刚创建的底层 conn）
