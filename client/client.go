@@ -30,6 +30,7 @@ type Client struct {
 	netAddr       net.Addr
 	//quicConn      *quic.Conn
 	Socket *streams.Socket
+	Config *quic.Config
 	framework.CloseableObject
 }
 
@@ -107,18 +108,20 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 	cli.netAddr = addr
 
 	tlsConfig := utils.GenTLSConfig()
-	quicConfig := &quic.Config{
-		MaxIncomingStreams:      0xffffffffffff,   // 最大默认stream输入，默认100
-		HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
-		MaxIdleTimeout:          10 * time.Second, // 默认30s，我们这边设置成10秒
-		KeepAlivePeriod:         3 * time.Second,  // 建议是 MaxIdleTimeout 的一半，或者更小的值
-		InitialPacketSize:       1200,             //当前最大数据包一个基础包的大小
-		DisablePathMTUDiscovery: false,
-		Allow0RTT:               true,
-		EnableDatagrams:         true,
+	if cli.Config == nil {
+		cli.Config = &quic.Config{
+			MaxIncomingStreams:      0xffffffffffff,   // 最大默认stream输入，默认100
+			HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
+			MaxIdleTimeout:          10 * time.Second, // 默认30s，我们这边设置成10秒
+			KeepAlivePeriod:         3 * time.Second,  // 建议是 MaxIdleTimeout 的一半，或者更小的值
+			InitialPacketSize:       1200,             //当前最大数据包一个基础包的大小
+			DisablePathMTUDiscovery: false,
+			Allow0RTT:               true,
+			EnableDatagrams:         true,
+		}
 	}
 	slog.Debug("正在远程连接", slog.Any("ServerAddress", cli.netAddr))
-	quicConn, err := quic.Dial(context.TODO(), cli.NetConn, cli.netAddr, tlsConfig, quicConfig)
+	quicConn, err := quic.Dial(context.TODO(), cli.NetConn, cli.netAddr, tlsConfig, cli.Config)
 	if err != nil {
 		slog.Info("远程连接失败！", slog.Any("err", err))
 		return err
@@ -160,9 +163,9 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 		}
 		go cli.Socket.HandleChannelStreamData(i, stream)
 	}
-	if quicConfig.EnableDatagrams {
+	if cli.Config.EnableDatagrams {
 		if cli.Socket.PacketPool == nil {
-			cli.Socket.PacketPool = cli.Socket.CreatePacketPool(quicConfig.InitialPacketSize)
+			cli.Socket.PacketPool = cli.Socket.CreatePacketPool(cli.Config.InitialPacketSize)
 		}
 
 		go cli.Socket.HandleChannelStreamDatagram()

@@ -5,6 +5,7 @@ import (
 	"github.com/DeleteElf/zero-net/framework/streams"
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/DeleteElf/zero-net/server"
+	"github.com/quic-go/quic-go"
 	"log/slog"
 	"strconv"
 	"testing"
@@ -13,17 +14,17 @@ import (
 
 var restart bool = false
 
-func socketHandler(sock *streams.Socket) {
+func socketHandler(svr *server.Server, sock *streams.Socket) {
 	if sock == nil {
 		slog.Error("客户端已经不存在！")
 		return
 	}
 	for i := 0; i < sock.ChannelCount; i++ {
-		go messageHandler(sock, i)
+		go messageHandler(svr, sock, i)
 	}
 }
 
-func messageHandler(sock *streams.Socket, channelIndex int) {
+func messageHandler(svr *server.Server, sock *streams.Socket, channelIndex int) {
 	for {
 		if sock.IsClosed {
 			break
@@ -47,29 +48,35 @@ func messageHandler(sock *streams.Socket, channelIndex int) {
 		if msg == "hello" {
 			template := "这是一条测试数据，我们需要用来测试一下 fec的功能是否正常，因此，我们会不断地评价它！！！"
 			stringList := make([]string, 10)
-			if sock.StreamChannels[channelIndex].Encoder != nil {
-				result := ""
-				for index := 0; index < 10; index++ {
-					result = result + template
-					stringList[index] = result
-					temp := strconv.Itoa(index) + ":" + result
-					data := []byte(temp)
-					slog.Debug("正在向客户端发送fec数据包", slog.Int("channelId", currentBuffer.ChannelId),
-						slog.Int("数据长度:", len(data)), slog.String("msg", temp))
-					err := sock.SendFecDatagram(channelIndex, int64(index), data)
-					if err != nil {
-						return
-					}
+			result := ""
+			for index := 0; index < 10; index++ {
+				result = result + template
+				stringList[index] = result
+				temp := strconv.Itoa(index) + ":" + result
+				data := []byte(temp)
+				slog.Debug("正在向客户端发送fec数据包", slog.Int("channelId", currentBuffer.ChannelId),
+					slog.Int("数据长度:", len(data)), slog.String("msg", temp))
+				if svr.Config.EnableDatagrams && sock.StreamChannels[channelIndex].Encoder != nil {
+					err = sock.SendFecDatagram(channelIndex, int64(index), data)
+				} else {
+					_, err = sock.Send(channelIndex, data)
 				}
-				for i := 9; i >= 0; i-- {
-					temp := strconv.Itoa(i+10) + ":" + stringList[i]
-					data := []byte(temp)
-					slog.Debug("正在向客户端发送fec数据包", slog.Int("channelId", currentBuffer.ChannelId),
-						slog.Int("数据长度:", len(data)), slog.String("msg", temp))
-					err := sock.SendFecDatagram(channelIndex, int64(i+10), data)
-					if err != nil {
-						return
-					}
+				if err != nil {
+					return
+				}
+			}
+			for i := 9; i >= 0; i-- {
+				temp := strconv.Itoa(i+10) + ":" + stringList[i]
+				data := []byte(temp)
+				slog.Debug("正在向客户端发送fec数据包", slog.Int("channelId", currentBuffer.ChannelId),
+					slog.Int("数据长度:", len(data)), slog.String("msg", temp))
+				if svr.Config.EnableDatagrams && sock.StreamChannels[channelIndex].Encoder != nil {
+					err = sock.SendFecDatagram(channelIndex, int64(i+10), data)
+				} else {
+					_, err = sock.Send(channelIndex, data)
+				}
+				if err != nil {
+					return
 				}
 			}
 		} else if msg == "bye" {
@@ -107,7 +114,17 @@ func TestServer(t *testing.T) {
 		}
 		testServer.OnAcceptSocket = func(sock *streams.Socket) {
 			slog.Debug("新的客户端接入：", slog.String("id", sock.Id))
-			go socketHandler(sock)
+			go socketHandler(testServer, sock)
+		}
+		testServer.Config = &quic.Config{
+			// MaxIncomingStreams: 0xffffffffffff, // 最大默认stream输入，默认100
+			HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
+			MaxIdleTimeout:          10 * time.Second, // 默认30s
+			KeepAlivePeriod:         3 * time.Second,  // 建议是 MaxIdleTimeout 的一半，或者更小的值
+			InitialPacketSize:       1200,             //初始包大小
+			DisablePathMTUDiscovery: false,            // 允许路径 MTU 探索
+			Allow0RTT:               true,
+			EnableDatagrams:         false, //允许直接传输udp
 		}
 		testServer.StartListen(func(sock *streams.Socket) {
 			slog.Debug("客户端断开连接：", slog.String("id", sock.Id))

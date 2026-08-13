@@ -290,7 +290,7 @@ func TestIceServer(t *testing.T) {
 	}()
 	testServer.OnAcceptSocket = func(sock *streams.Socket) {
 		slog.Debug("新的客户端接入：", slog.String("id", sock.Id))
-		go socketHandler(sock)
+		go socketHandler(testServer, sock)
 	}
 	// 打洞监听协程
 	go func() {

@@ -4,6 +4,7 @@ import (
 	"github.com/DeleteElf/zero-net/client"
 	"github.com/DeleteElf/zero-net/framework/streams"
 	"github.com/DeleteElf/zero-net/framework/utils"
+	"github.com/quic-go/quic-go"
 	"log/slog"
 	"testing"
 	"time"
@@ -44,7 +45,16 @@ func receiveHandler(cli *client.Client, channelIndex int) {
 func TestClient(t *testing.T) {
 	utils.InitLog(slog.LevelDebug, nil)                  //初始化日志
 	cli := client.NewClient("127.0.0.1:10001", "test01") //尝试连接本机服务
-
+	cli.Config = &quic.Config{
+		MaxIncomingStreams:      0xffffffffffff,   // 最大默认stream输入，默认100
+		HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
+		MaxIdleTimeout:          10 * time.Second, // 默认30s，我们这边设置成10秒
+		KeepAlivePeriod:         3 * time.Second,  // 建议是 MaxIdleTimeout 的一半，或者更小的值
+		InitialPacketSize:       1200,             //当前最大数据包一个基础包的大小
+		DisablePathMTUDiscovery: false,
+		Allow0RTT:               true,
+		EnableDatagrams:         false,
+	}
 	err := cli.Connect(3, streams.STREAM_NETWORK_UDP, func(sock *streams.Socket) {
 		slog.Debug("socket已经断开===》！", slog.String("clientId", sock.Id))
 	}) //创建udp网络
