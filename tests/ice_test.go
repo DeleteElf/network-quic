@@ -179,7 +179,8 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 func TestIceClient(t *testing.T) {
 	utils.InitLog(slog.LevelDebug, nil)   //初始化日志
 	cli := client.NewClient("", "test01") //尝试连接外网本机服务
-	cli.Stun = "stun.l.google.com:3478"
+	cli.Stun = "stun:stun.l.google.com:19302"
+	//cli.Stun = "stun:stun.new0.com.cn:3478"
 
 	err := ConnectByStun(cli, "0DBDB1AE-CABD-F2BA-4F89-132A39EC90D1", "test", 3, func(sock *streams.Socket) {
 		slog.Debug("socket已经断开===》！", slog.String("clientId", sock.Id))
@@ -231,7 +232,8 @@ func TestIceServer(t *testing.T) {
 
 	// 1. 初始化 Server 实例并确保绑定端口/创建 NetConn
 	testServer = server.NewServer(nil, false) //server.NewServerByAddress("0.0.0.0:10001")
-	testServer.Stun = "stun.l.google.com:3478"
+	testServer.Stun = "stun:stun.l.google.com:19302"
+	//testServer.Stun = "stun:stun.new0.com.cn:3478"
 	// ⚠️ 【关键修正】：确保 testServer.NetConn 不为 nil 后再调用 DetectStun
 	if testServer.NetConn == nil {
 		addr, _ := net.ResolveUDPAddr("udp", "0.0.0.0:10001")
