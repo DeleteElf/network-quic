@@ -18,7 +18,7 @@ import (
 type FECPacket struct {
 	//通道的编号，主要用于路由分发，1个字节
 	ChannelId int
-	//分组的编号，主要用于重组，8个字节，考虑到可能会播放很久
+	//分组的编号，主要用于重组，8个字节，考虑到可能会播放很久,GroupId并不等于FrameIndex，一个数据包可能被拆成多个分组
 	GroupId uint64
 	//shard的索引 1个字节
 	ShardIdx int
