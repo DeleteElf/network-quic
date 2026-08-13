@@ -4,6 +4,7 @@ import "C"
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/DeleteElf/zero-net/framework"
 	"github.com/DeleteElf/zero-net/framework/streams"
 	"github.com/DeleteElf/zero-net/framework/utils"
@@ -11,6 +12,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"log/slog"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -110,7 +112,7 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 		HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
 		MaxIdleTimeout:          10 * time.Second, // 默认30s，我们这边设置成10秒
 		KeepAlivePeriod:         3 * time.Second,  // 建议是 MaxIdleTimeout 的一半，或者更小的值
-		InitialPacketSize:       1500,             //当前最大数据包一个基础包的大小
+		InitialPacketSize:       1200,             //当前最大数据包一个基础包的大小
 		DisablePathMTUDiscovery: false,
 		Allow0RTT:               true,
 		EnableDatagrams:         true,
@@ -177,4 +179,51 @@ func (cli *Client) Send(channleId int, data []byte) (bool, error) {
 	}
 	return cli.Socket.Send(channleId, data)
 
+}
+
+func (cli *Client) PunchHole(targetAddr net.Addr, timeout time.Duration) error {
+	slog.Info("开始与目标服务器进行 UDP 双向打洞...", slog.String("target", targetAddr.String()))
+
+	// 设置超时时间
+	_ = cli.NetConn.SetReadDeadline(time.Now().Add(timeout))
+	defer cli.NetConn.SetReadDeadline(time.Time{}) // 恢复无超时限制
+
+	pingMsg := []byte("{\"action\":\"ping\",\"from\":\"iceClient\"}")
+	buf := make([]byte, 1024)
+
+	done := make(chan error, 1)
+
+	// 后台持续发包协程
+	go func() {
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				_, _ = cli.NetConn.WriteTo(pingMsg, targetAddr)
+			}
+		}
+	}()
+
+	// 主协程等待接收对方的 PING / PONG 回包
+	for {
+		n, addr, err := cli.NetConn.ReadFrom(buf)
+		if err != nil {
+			done <- err
+			return fmt.Errorf("打洞超时或失败: %w", err)
+		}
+
+		// 收到包，打印日志
+		recvStr := string(buf[:n])
+		slog.Debug("打洞期间收到包", slog.String("from", addr.String()), slog.String("data", recvStr))
+
+		// 只要收到来自于目标的响应（或者是包含 action 的 JSON 包），就说明双向洞口已打通！
+		if strings.Contains(recvStr, "ice") || addr.String() == targetAddr.String() {
+			slog.Info("🎉 UDP 双向打洞成功！NAT 洞口已建立，准备发起 QUIC 握手")
+			done <- nil
+			return nil
+		}
+	}
 }

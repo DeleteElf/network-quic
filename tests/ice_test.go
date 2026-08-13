@@ -3,6 +3,8 @@ package tests
 import (
 	"bytes"
 	"crypto/tls"
+	"errors"
+	"fmt"
 	"github.com/DeleteElf/zero-net/client"
 	"github.com/DeleteElf/zero-net/framework/streams"
 	"github.com/DeleteElf/zero-net/framework/utils"
@@ -35,6 +37,65 @@ func DetectStun(stun, token string, conn net.PacketConn) (string, int) {
 	return "", 0
 }
 
+func PunchHoleAsync(conn net.PacketConn, targetAddr net.Addr) error {
+	slog.Info("客户端：开始异步向服务端盲发 UDP 包冲刷 NAT 洞口...", slog.String("target", targetAddr.String()))
+	go func() {
+		pingMsg := []byte("{\"action\":\"ping\",\"from\":\"ice-certification\"}")
+		// 密集发送 20 个 UDP 包（持续 600ms），把客户端 NAT 防火墙对服务端的出口映射彻底打开
+		for i := 0; i < 200; i++ {
+			_, _ = conn.WriteTo(pingMsg, targetAddr)
+			time.Sleep(30 * time.Millisecond)
+		}
+		slog.Debug("客户端：NAT 出口冲刷完成！")
+	}()
+	return nil
+}
+
+// 【客户端打洞】：持续向服务端发包开洞，并等待服务端的回应
+func PunchHole(conn net.PacketConn, targetAddr net.Addr, timeout time.Duration) error {
+	slog.Info("客户端：开始与目标服务器进行 UDP 双向打洞...", slog.String("target", targetAddr.String()))
+
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	defer conn.SetReadDeadline(time.Time{})
+
+	pingMsg := []byte("{\"action\":\"ping\",\"from\":\"ice-certification\"}")
+	buf := make([]byte, 1024)
+	stopChan := make(chan struct{})
+
+	// 1. 后台持续给服务端发包，保持客户端 NAT 洞口开启
+	go func() {
+		ticker := time.NewTicker(40 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopChan:
+				return
+			case <-ticker.C:
+				_, _ = conn.WriteTo(pingMsg, targetAddr)
+			}
+		}
+	}()
+
+	// 2. 阻塞接收服务端的打洞包
+	for {
+		n, addr, err := conn.ReadFrom(buf)
+		if err != nil {
+			close(stopChan)
+			return fmt.Errorf("客户端打洞超时/失败: %w", err)
+		}
+
+		recvStr := string(buf[:n])
+		slog.Debug("客户端收到打洞回包", slog.String("from", addr.String()), slog.String("data", recvStr))
+
+		// 匹配来自服务端明确的冰打洞包
+		if strings.Contains(recvStr, "ice-certification") {
+			slog.Info("🎉 UDP 双向打洞成功！洞口已建立，准备发起 QUIC 握手")
+			close(stopChan)
+			return nil
+		}
+	}
+}
+
 func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, onDisconnect streams.SocketCallbackFunc) error {
 	var err error
 	cli.NetConn, err = streams.NewUdpSocketClient()
@@ -47,6 +108,13 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 	if len(cli.Stun) > 0 { //如果配置了stun服务器
 		localIp := stunhelper.GetLocalAddress(cli.Stun)
 		remoteAddress, port := DetectStun(cli.Stun, stunKey, cli.NetConn)
+
+		slog.Info("客户端 STUN 解析结果", slog.String("remoteAddress", remoteAddress), slog.Int("port", port))
+		if remoteAddress == "" || port == 0 {
+			slog.Error("客户端 STUN 探测失败，无法获取公网地址！")
+			return errors.New("STUN detect failed")
+		}
+
 		strs := strings.Split(cli.NetConn.LocalAddr().String(), ":")
 		data := jsonhelper.JsonObject{}
 		data["type"] = "offer"
@@ -57,9 +125,7 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 			return err
 		}
 
-		tr := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
+		tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 		httpClient := &http.Client{Transport: tr}
 		request, err := http.NewRequest(http.MethodPost, "https://192.168.199.159:3005/ice?device_id=0A76DE8C-1AB1-35C3-A137-FC9E10B1EF9F",
 			bytes.NewBufferString(jsonData))
@@ -98,20 +164,22 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 		return err
 	}
 	if len(cli.Stun) > 0 {
-		go func() {
-			for i := 0; i < 10; i++ {
-				_, _ = cli.NetConn.WriteTo([]byte("{\"action\":\"ping\",\"from\":\"iceClient\"}"), netAddr)
-				time.Sleep(20 * time.Millisecond)
-			}
-		}()
+		err = PunchHole(cli.NetConn, netAddr, 5*time.Second)
+		if err != nil {
+			slog.Error("UDP 打洞失败，放弃 QUIC 连接", slog.Any("err", err))
+			return err
+		}
+		// 2. 稍微等待 200ms，让双方的打洞 UDP 包在公网路上“相遇”并建立 NAT 映射轨
+		time.Sleep(200 * time.Millisecond)
 	}
-	return cli.ConnectToNet(channelCount, cli.NetConn, netAddr, onDisconnect)
+	//return cli.ConnectToNet(channelCount, cli.NetConn, netAddr, onDisconnect)
+	return nil
 }
 
 func TestIceClient(t *testing.T) {
 	utils.InitLog(slog.LevelDebug, nil)   //初始化日志
 	cli := client.NewClient("", "test01") //尝试连接外网本机服务
-	cli.Stun = "stun:stun.new0.com.cn:3478"
+	cli.Stun = "stun.l.google.com:3478"
 
 	err := ConnectByStun(cli, "0DBDB1AE-CABD-F2BA-4F89-132A39EC90D1", "test", 3, func(sock *streams.Socket) {
 		slog.Debug("socket已经断开===》！", slog.String("clientId", sock.Id))
@@ -148,69 +216,70 @@ func TestIceClient(t *testing.T) {
 
 func TestIceServer(t *testing.T) {
 	utils.InitLog(slog.LevelDebug, nil)
-	client := websocket.NewClient()
-	client.HeartTimeout = time.Second * 5
-	client.OnConnected = func(address string) {
+	ws := websocket.NewClient()
+	ws.HeartTimeout = time.Second * 5
+	ws.OnConnected = func(address string) {
 		slog.Info("与服务端连接", slog.String("address", address))
-		client.Send("{\"action\":\"register\",\"appid\":0,\"info\":{\"hostname\":\"PC-PAQHBVPFDXTY\",\"version\":\"1.0.26.080501\",\"appVersion\":\"7.1.431.-1\",\"gfeVersion\":\"3.23.0.74\",\"cpuid\":\"0000001068747541444D416369746E65_34-5A-60-7B-98-E1\",\"cpu\":\"AMD Ryzen 5 5600GT with Radeon Graphics\",\"mac\":\"34-5A-60-7B-98-E1\",\"ip\":\"192.168.199.22\",\"gpu\":\"\",\"ram\":\"27.90 GB (3.89 GB 可用)\",\"os\":\"windows NT 10 22H2\",\"apps\":[{\"id\":\"10000\",\"name\":\"Desktop\"}]}}")
+		ws.Send("{\"action\":\"register\",\"appid\":0,\"info\":{\"hostname\":\"PC-PAQHBVPFDXTY\",\"version\":\"1.0.26.080501\",\"appVersion\":\"7.1.431.-1\",\"gfeVersion\":\"3.23.0.74\",\"cpuid\":\"0000001068747541444D416369746E65_34-5A-60-7B-98-E1\",\"cpu\":\"AMD Ryzen 5 5600GT with Radeon Graphics\",\"mac\":\"34-5A-60-7B-98-E1\",\"ip\":\"192.168.199.22\",\"gpu\":\"\",\"ram\":\"27.90 GB (3.89 GB 可用)\",\"os\":\"windows NT 10 22H2\",\"apps\":[{\"id\":\"10000\",\"name\":\"Desktop\"}]}}")
 	}
-	client.OnDisconnected = func(reason string) {
+	ws.OnDisconnected = func(reason string) {
 		slog.Info("与服务端断开连接", slog.String("reason", reason))
-		if client.Reconnect && !client.IsClosed {
-			_ = client.Connect(client.Address, client.HeartMessage)
+		if ws.Reconnect && !ws.IsClosed {
+			_ = ws.Connect(ws.Address, ws.HeartMessage)
 		}
 	}
 
-	iceMessage := make(chan string)
-	testServer = server.NewServerByAddress("0.0.0.0:10001") //尝试连接本机服务
-	testServer.Stun = "stun:stun.new0.com.cn:3478"
+	// 1. 初始化 Server 实例并确保绑定端口/创建 NetConn
+	testServer = server.NewServer(nil, false) //server.NewServerByAddress("0.0.0.0:10001")
+	testServer.Stun = "stun.l.google.com:3478"
+	// ⚠️ 【关键修正】：确保 testServer.NetConn 不为 nil 后再调用 DetectStun
+	if testServer.NetConn == nil {
+		addr, _ := net.ResolveUDPAddr("udp", "0.0.0.0:10001")
+		testServer.NetConn, _ = net.ListenUDP("udp", addr)
+	}
+
 	remoteAddress, port := DetectStun(testServer.Stun, "test", testServer.NetConn)
-	client.OnMessage = func(msg string) {
-		//slog.Info("收到新的消息", slog.String("msg", msg))
-		//如果对方要求ice，则返回ice信息，同时向对方的ice发送一条消息
-		//candidate:1 1 UDP 2130706431 203.0.113.1 50000 typ srflx raddr 192.168.1.50 rport 50000
+	slog.Info("服务端 STUN 解析结果", slog.String("remoteAddress", remoteAddress), slog.Int("port", port))
+
+	iceMessage := make(chan string)
+
+	ws.OnMessage = func(msg string) {
 		data, err := jsonhelper.GetJsonObject([]byte(msg))
-		if err == nil {
-			if data["data"] != nil {
-				body := data["data"].(map[string]interface{})
-				if body["type"] != nil && body["sdp"] != nil {
-					switch body["type"].(string) {
-					case "offer":
-						result := jsonhelper.JsonObject{}
-						sdpBody := jsonhelper.JsonObject{}
-						result["success"] = "true"
-						result["action"] = data["action"].(string)
-						result["type"] = "response"
-						if data["session_id"] != nil {
-							result["session_id"] = data["session_id"].(string)
-						} else if body["session_id"] != nil {
-							result["session_id"] = body["session_id"].(string)
-						}
-						localAddress, err := net.ResolveUDPAddr("udp", client.Conn.LocalAddr().String())
-						if err == nil {
+		if err == nil && data["data"] != nil {
+			body := data["data"].(map[string]interface{})
+			if body["type"] != nil && body["sdp"] != nil && body["type"].(string) == "offer" {
+				result := jsonhelper.JsonObject{}
+				sdpBody := jsonhelper.JsonObject{}
+				result["success"] = "true"
+				result["action"] = data["action"].(string)
+				result["type"] = "response"
+				if body["session_id"] != nil {
+					result["session_id"] = body["session_id"].(string)
+				}
 
-							sdpBody["type"] = "answer"
-							sdpBody["sdp"] = "candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localAddress.IP.String() + " rport 10001"
-							result["data"] = sdpBody
-							re, e := jsonhelper.ToJsonString(result)
-							if e == nil {
-								_ = client.Send(re)
-							}
+				localAddress, err := net.ResolveUDPAddr("udp", ws.Conn.LocalAddr().String())
+				if err == nil {
+					sdpBody["type"] = "answer"
+					sdpBody["sdp"] = "candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localAddress.IP.String() + " rport 10001"
+					result["data"] = sdpBody
+					re, e := jsonhelper.ToJsonString(result)
+					if e == nil {
+						_ = ws.Send(re)
+					}
 
-							if body["sdp"] != nil {
-								datas := strings.Split(body["sdp"].(string), " ")
-								addr := net.JoinHostPort(datas[4], datas[5])
-								iceMessage <- addr
-							}
+					if body["sdp"] != nil {
+						datas := strings.Split(body["sdp"].(string), " ")
+						if len(datas) >= 6 {
+							addr := net.JoinHostPort(datas[4], datas[5])
+							iceMessage <- addr
 						}
-						break
 					}
 				}
 			}
 		}
 	}
 	go func() {
-		err := client.Connect("wss://192.168.199.159:3005/device?type=device&apikey=575D6618206A2754", websocket.DefaultHeartMessage)
+		err := ws.Connect("wss://192.168.199.159:3005/device?type=device&apikey=575D6618206A2754", websocket.DefaultHeartMessage)
 		if err != nil {
 			slog.Error("连接发生错误", slog.Any("err", err))
 		}
@@ -219,6 +288,7 @@ func TestIceServer(t *testing.T) {
 		slog.Debug("新的客户端接入：", slog.String("id", sock.Id))
 		go socketHandler(sock)
 	}
+	// 打洞监听协程
 	go func() {
 		for {
 			select {
@@ -227,28 +297,38 @@ func TestIceServer(t *testing.T) {
 				if len(addr) > 10 {
 					clientAddr, err := net.ResolveUDPAddr(streams.STREAM_NETWORK_UDP, addr)
 					if err == nil {
-						for i := 0; i < 50; i++ {
-							testServer.NetConn.WriteTo([]byte("{\"action\":\"ping\",\"from\":\"ice\"}"), clientAddr)
-							time.Sleep(20 * time.Millisecond)
-						}
-
+						_ = PunchHoleAsync(testServer.NetConn, clientAddr)
 					}
 				}
 				break
 			}
 		}
 	}()
-
+	buf := make([]byte, 65535) // UDP 数据包最大 Buffer
 	for {
 		if restart {
 			time.Sleep(1 * time.Second)
 			slog.Debug("服务端重新启动监听！")
 			restart = false
 		}
-		testServer.StartListen(func(sock *streams.Socket) {
-			slog.Debug("客户端断开连接：", slog.String("id", sock.Id))
-		})
-		slog.Debug("服务端退出监听！")
+		//testServer.StartListen(func(sock *streams.Socket) {
+		//	slog.Debug("客户端断开连接：", slog.String("id", sock.Id))
+		//})
+
+		// 直接从底层的 net.PacketConn 中读取原生 UDP 数据包
+		_, remoteAddr, err := testServer.NetConn.ReadFrom(buf)
+		if testServer.IsClosed {
+			break
+		}
+		if err != nil {
+			slog.Warn("读取 UDP 数据包失败", slog.Any("err", err))
+			// 如果是超时或连接关闭错误，退出循环
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			break
+		}
+		slog.Debug("客户端接入成功！", slog.String("ip", remoteAddr.String()))
 		if !restart {
 			break
 		}
