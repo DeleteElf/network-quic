@@ -65,7 +65,7 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 	slog.Info("客户端：开始异步向服务端盲发 UDP 包冲刷 NAT 洞口...", slog.String("target", targetAddr.String()))
 	go func() {
 		pingMsg := []byte(message)
-		for i := 0; i < 1; i++ {
+		for i := 0; i < 1; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
 			_, _ = iw.NetConn.WriteTo(pingMsg, targetAddr)
 			time.Sleep(20 * time.Millisecond)
 		}
@@ -85,7 +85,7 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 				ips := strings.Split(addr.String(), ":")
 				port, _ := strconv.Atoi(ips[1])
 				// 匹配来自服务端明确的冰打洞包
-				if recvStr == message && len(ips) == 2 {
+				if recvStr == message && len(ips) == 2 { //为了防止污染数据，我们需要校验一下消息内容
 					iw.IceChannel <- IceObject{
 						SessionId: message,
 						Ip:        ips[0],
