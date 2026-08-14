@@ -65,7 +65,7 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 	slog.Info("客户端：开始异步向服务端盲发 UDP 包冲刷 NAT 洞口...", slog.String("target", targetAddr.String()))
 	go func() {
 		pingMsg := []byte(message)
-		for i := 0; i < 10; i++ {
+		for i := 0; i < 1; i++ {
 			_, _ = iw.NetConn.WriteTo(pingMsg, targetAddr)
 			time.Sleep(20 * time.Millisecond)
 		}
@@ -80,16 +80,19 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 				slog.Debug("客户端打洞超时/失败: %w", err)
 			}
 			recvStr := string(buf[:n])
-			slog.Debug("客户端收到打洞回包", slog.String("from", addr.String()), slog.String("data", recvStr))
-			ips := strings.Split(addr.String(), ":")
-			port, _ := strconv.Atoi(ips[1])
-			// 匹配来自服务端明确的冰打洞包
-			if recvStr == message && len(ips) == 2 {
-				iw.IceChannel <- IceObject{
-					SessionId: message,
-					Ip:        ips[0],
-					Port:      port,
-					State:     Connected,
+			if addr != nil {
+				slog.Debug("客户端收到打洞回包", slog.String("from", addr.String()), slog.String("data", recvStr))
+				ips := strings.Split(addr.String(), ":")
+				port, _ := strconv.Atoi(ips[1])
+				// 匹配来自服务端明确的冰打洞包
+				if recvStr == message && len(ips) == 2 {
+					iw.IceChannel <- IceObject{
+						SessionId: message,
+						Ip:        ips[0],
+						Port:      port,
+						State:     Connected,
+					}
+					return
 				}
 			}
 		}

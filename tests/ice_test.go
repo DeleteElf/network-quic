@@ -9,7 +9,7 @@ import (
 	"github.com/DeleteElf/zero-net/ice"
 	"github.com/DeleteElf/zero-net/server"
 	"github.com/DeleteElf/zero-net/websocket"
-	"github.com/deleteelf/goframework/utils/jsonhelper"
+
 	"log/slog"
 	"net"
 	"net/http"
@@ -39,10 +39,10 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 		}
 
 		strs := strings.Split(cli.NetConn.LocalAddr().String(), ":")
-		data := jsonhelper.JsonObject{}
+		data := utils.JsonObject{}
 		data["type"] = "offer"
 		data["sdp"] = "a=candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localIp + " rport " + strs[len(strs)-1]
-		jsonData, err := jsonhelper.ToJsonString(data)
+		jsonData, err := utils.ToJsonString(data)
 		if err != nil {
 			slog.Error("转成json过程出错！", slog.Any("err", err))
 			return err
@@ -53,7 +53,7 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 			slog.Error("读取http应答的body出错！", slog.Any("err", err))
 		}
 		slog.Info("收到http应答：", slog.String("body", string(body)))
-		result, err := jsonhelper.GetJsonObject(body)
+		result, err := utils.GetJsonObject(body)
 
 		if result["data"] != nil {
 			sdpData := result["data"].(map[string]interface{})
@@ -82,8 +82,9 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 		}
 		slog.Debug("打洞成功！", slog.String("body", string(body)))
 	}
-	return cli.ConnectToNet(channelCount, cli.NetConn, netAddr, onDisconnect)
-	//return nil
+	//return cli.ConnectToNet(channelCount, cli.NetConn, netAddr, onDisconnect)
+	//cli.NetConn.WriteTo("发送打洞消息给服务端",)
+	return nil
 }
 
 func TestIceClient(t *testing.T) {
@@ -140,51 +141,82 @@ func TestIceServer(t *testing.T) {
 	remoteAddress, port := testServer.DetectStun("test")
 	slog.Info("服务端 STUN 解析结果", slog.String("remoteAddress", remoteAddress), slog.Int("port", port))
 
-	//iceMessage := make(chan jsonhelper.JsonObject)
+	//iceMessage := make(chan utils.JsonObject)
 
 	ws.OnMessage = func(msg string) {
-		data, err := jsonhelper.GetJsonObject([]byte(msg))
+		data, err := utils.GetJsonObject([]byte(msg))
 		if err == nil && data["data"] != nil {
 			body := data["data"].(map[string]interface{})
-			if body["type"] != nil && body["sdp"] != nil && body["type"].(string) == "offer" {
-				result := jsonhelper.JsonObject{}
-				sdpBody := jsonhelper.JsonObject{}
-				result["success"] = "true"
-				result["action"] = data["action"].(string)
-				result["type"] = "response"
-				sessionId := ""
-				if body["session_id"] != nil {
-					sessionId = body["session_id"].(string)
-					result["session_id"] = sessionId
+			action := data["action"].(string)
+			switch action {
+			case "ice_state":
+				{
+					if body["session_id"] != nil {
+						sessionId := body["session_id"].(string)
+						select {
+						case <-testServer.IceChannel:
+							result := utils.JsonObject{}
+							result["success"] = "true"
+							result["action"] = "ice_state"
+							result["type"] = "response"
+							result["session_id"] = sessionId
+							msg, _ := utils.ToJsonString(result)
+							slog.Debug("发送消息", slog.String("msg", msg))
+							_ = ws.Send(msg)
+							//go func() {
+							//	testServer.StartListen(func(sock *network.Socket) {
+							//		slog.Debug("客户端断开连接：", slog.String("id", sock.Id))
+							//	})
+							//}()
+							break
+						}
+					}
+					break
 				}
-
-				localAddress, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, ws.Conn.LocalAddr().String())
-				if err == nil {
-					sdpBody["type"] = "answer"
-					sdpBody["sdp"] = "a=candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localAddress.IP.String() + " rport 10001"
-					result["data"] = sdpBody
-					re, e := jsonhelper.ToJsonString(result)
-					if e == nil {
-						_ = ws.Send(re)
+			case "ice":
+				if body["type"] != nil && body["sdp"] != nil && body["type"].(string) == "offer" {
+					result := utils.JsonObject{}
+					sdpBody := utils.JsonObject{}
+					result["success"] = "true"
+					result["action"] = data["action"].(string)
+					result["type"] = "response"
+					sessionId := ""
+					if body["session_id"] != nil {
+						sessionId = body["session_id"].(string)
+						result["session_id"] = sessionId
 					}
 
-					if body["sdp"] != nil {
-						datas := strings.Split(body["sdp"].(string), " ")
-						if len(datas) >= 6 {
-							addr := net.JoinHostPort(datas[4], datas[5])
-							slog.Debug("收到请求探测新的地址", slog.String("addr", addr))
-							if len(addr) > 10 {
-								go func() {
-									clientAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, addr)
-									if err == nil {
-										_ = testServer.PunchHoleAsync(clientAddr, sessionId)
-									}
-								}()
+					localAddress, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, ws.Conn.LocalAddr().String())
+					if err == nil {
+						sdpBody["type"] = "answer"
+						sdpBody["sdp"] = "a=candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localAddress.IP.String() + " rport 10001"
+						result["data"] = sdpBody
+						re, e := utils.ToJsonString(result)
+						if e == nil {
+							_ = ws.Send(re)
+						}
+
+						if body["sdp"] != nil {
+							datas := strings.Split(body["sdp"].(string), " ")
+							if len(datas) >= 6 {
+								addr := net.JoinHostPort(datas[4], datas[5])
+								slog.Debug("收到请求探测新的地址", slog.String("addr", addr))
+								if len(addr) > 10 {
+									go func() {
+										clientAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, addr)
+										if err == nil {
+											_ = testServer.PunchHoleAsync(clientAddr, sessionId)
+										}
+									}()
+								}
+								//iceMessage <- addr
 							}
-							//iceMessage <- addr
 						}
 					}
 				}
+				break
+			default:
+				break
 			}
 		}
 	}
@@ -215,13 +247,7 @@ func TestIceServer(t *testing.T) {
 			if testServer.IsClosed {
 				break
 			}
-			select {
-			case iceObject := <-testServer.IceChannel:
-
-				msg, _ := jsonhelper.ToJsonString(iceObject)
-				_ = ws.Send(msg)
-				break
-			}
+			time.Sleep(time.Second * 1)
 		}
 		if !restart {
 			break

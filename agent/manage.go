@@ -8,7 +8,6 @@ import (
 	"github.com/DeleteElf/zero-net/framework/network"
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/DeleteElf/zero-net/server"
-	"github.com/deleteelf/goframework/utils/jsonhelper"
 	"github.com/quic-go/quic-go"
 	"log/slog"
 	"net"
@@ -100,7 +99,7 @@ func (mgr *ManagePlatform) OnClosed() {
 }
 
 func (mgr *ManagePlatform) sendJson(v any) error {
-	jsonString, err := jsonhelper.ToJsonString(v)
+	jsonString, err := utils.ToJsonString(v)
 	if err != nil {
 		return err
 	}

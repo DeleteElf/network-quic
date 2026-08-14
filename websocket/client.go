@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"github.com/DeleteElf/zero-net/framework"
-	"github.com/deleteelf/goframework/utils/jsonhelper"
+	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/gorilla/websocket"
 	"log/slog"
 	"time"
@@ -90,7 +90,7 @@ func (c *Client) Connect(address, heartMessage string) error {
 			}
 			c.lastMessageTime = time.Now()
 			slog.Debug("接收消息", slog.Any("body", msg))
-			result, err := jsonhelper.GetJsonObject(msg)
+			result, err := utils.GetJsonObject(msg)
 			if err != nil {
 				c.Reason = fmt.Sprintf("{\"code\":%d,\"msg\":\"%s\"}", 3, err.Error())
 				break
@@ -159,7 +159,7 @@ func (c *Client) OnClosed() {
 }
 
 func (c *Client) SendJson(v any) error {
-	jsonString, err := jsonhelper.ToJsonString(v)
+	jsonString, err := utils.ToJsonString(v)
 	if err != nil {
 		return err
 	}

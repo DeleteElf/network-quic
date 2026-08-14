@@ -71,10 +71,10 @@ package tests
 //		}
 //
 //		strs := strings.Split(cli.NetConn.LocalAddr().String(), ":")
-//		data := jsonhelper.JsonObject{}
+//		data := utils.JsonObject{}
 //		data["type"] = "offer"
 //		data["sdp"] = "candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localIp + " rport " + strs[len(strs)-1]
-//		jsonData, err := jsonhelper.ToJsonString(data)
+//		jsonData, err := utils.ToJsonString(data)
 //		if err != nil {
 //			slog.Error("转成json过程出错！", slog.Any("err", err))
 //			return err
@@ -105,7 +105,7 @@ package tests
 //			slog.Error("读取http应答的body出错！", slog.Any("err", err))
 //		}
 //		slog.Info("收到http应答：", slog.String("body", string(body)))
-//		result, err := jsonhelper.GetJsonObject(body)
+//		result, err := utils.GetJsonObject(body)
 //
 //		if result["data"] != nil {
 //			sdpData := result["data"].(map[string]interface{})
@@ -199,12 +199,12 @@ package tests
 //	iceMessage := make(chan string)
 //
 //	ws.OnMessage = func(msg string) {
-//		data, err := jsonhelper.GetJsonObject([]byte(msg))
+//		data, err := utils.GetJsonObject([]byte(msg))
 //		if err == nil && data["data"] != nil {
 //			body := data["data"].(map[string]interface{})
 //			if body["type"] != nil && body["sdp"] != nil && body["type"].(string) == "offer" {
-//				result := jsonhelper.JsonObject{}
-//				sdpBody := jsonhelper.JsonObject{}
+//				result := utils.JsonObject{}
+//				sdpBody := utils.JsonObject{}
 //				result["success"] = "true"
 //				result["action"] = data["action"].(string)
 //				result["type"] = "response"
@@ -217,7 +217,7 @@ package tests
 //					sdpBody["type"] = "answer"
 //					sdpBody["sdp"] = "candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localAddress.IP.String() + " rport 10001"
 //					result["data"] = sdpBody
-//					re, e := jsonhelper.ToJsonString(result)
+//					re, e := utils.ToJsonString(result)
 //					if e == nil {
 //						_ = ws.Send(re)
 //					}
