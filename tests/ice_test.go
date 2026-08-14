@@ -2,7 +2,6 @@ package tests
 
 import (
 	"bytes"
-	"crypto/tls"
 	"errors"
 	"github.com/DeleteElf/zero-net/client"
 	"github.com/DeleteElf/zero-net/framework/network"
@@ -11,7 +10,6 @@ import (
 	"github.com/DeleteElf/zero-net/server"
 	"github.com/DeleteElf/zero-net/websocket"
 	"github.com/deleteelf/goframework/utils/jsonhelper"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -49,28 +47,8 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 			slog.Error("转成json过程出错！", slog.Any("err", err))
 			return err
 		}
-
-		tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
-		httpClient := &http.Client{Transport: tr}
-		request, err := http.NewRequest(http.MethodPost, "https://36.249.161.74:3005/ice?device_id=0A76DE8C-1AB1-35C3-A137-FC9E10B1EF9F",
-			bytes.NewBufferString(jsonData))
-		if err != nil {
-			slog.Error("生成http出错！", slog.Any("err", err))
-			return err
-		}
-		request.Header.Set("Authorization", token)
-		resp, err := httpClient.Do(request)
-		slog.Debug("发送数据", slog.String("data", jsonData))
-		if err != nil {
-			slog.Error("请求http出错！", slog.Any("err", err))
-			return err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			slog.Error("请求http失败！", slog.String("错误码", resp.Status))
-			return nil
-		}
-		body, err := io.ReadAll(resp.Body)
+		body, err := network.HttpRequest("https://36.249.161.74:3005/ice?device_id=0A76DE8C-1AB1-35C3-A137-FC9E10B1EF9F",
+			http.MethodPost, token, bytes.NewBufferString(jsonData))
 		if err != nil {
 			slog.Error("读取http应答的body出错！", slog.Any("err", err))
 		}
@@ -93,11 +71,16 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 		return err
 	}
 	if len(cli.Stun) > 0 {
-		err = cli.PunchHole(netAddr, cli.SessionId, time.Second)
+		stopChannel := make(chan struct{})
+		cli.PunchHole(netAddr, cli.SessionId, time.Second, stopChannel)
+		body, err := network.HttpRequest("https://36.249.161.74:3005/ice_state?device_id=0A76DE8C-1AB1-35C3-A137-FC9E10B1EF9F",
+			http.MethodGet, token, nil)
+		close(stopChannel)
 		if err != nil {
-			slog.Error("UDP 打洞失败，放弃 QUIC 连接", slog.Any("err", err))
+			slog.Error("读取http应答的body出错！", slog.Any("err", err))
 			return err
 		}
+		slog.Debug("打洞成功！", slog.String("body", string(body)))
 	}
 	return cli.ConnectToNet(channelCount, cli.NetConn, netAddr, onDisconnect)
 	//return nil
@@ -216,26 +199,7 @@ func TestIceServer(t *testing.T) {
 		slog.Debug("新的客户端接入：", slog.String("id", sock.Id))
 		go socketHandler(testServer, sock)
 	}
-	// 打洞监听协程
-	//go func() {
-	//	for {
-	//		select {
-	//		case msg := <-iceMessage:
-	//			addr := msg["address"].(string)
-	//			sessionId := msg["session_id"].(string)
-	//			slog.Debug("收到请求探测新的地址", slog.String("addr", addr))
-	//			if len(addr) > 10 {
-	//				clientAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, addr)
-	//				if err == nil {
-	//					_ = testServer.PunchHoleAsync(clientAddr, sessionId)
-	//				}
-	//			}
-	//			break
-	//		}
-	//	}
-	//}()
-	buf := make([]byte, 65535) // UDP 数据包最大 Buffer
-	udpConn := testServer.NetConn.(*net.UDPConn)
+
 	for {
 		if restart {
 			time.Sleep(1 * time.Second)
@@ -251,19 +215,13 @@ func TestIceServer(t *testing.T) {
 			if testServer.IsClosed {
 				break
 			}
-			count, _, err := udpConn.ReadFromUDP(buf)
-			if testServer.IsClosed {
+			select {
+			case iceObject := <-testServer.IceChannel:
+
+				msg, _ := jsonhelper.ToJsonString(iceObject)
+				_ = ws.Send(msg)
 				break
 			}
-			if err != nil {
-				slog.Warn("读取 UDP 数据包失败", slog.Any("err", err))
-				// 如果是超时或连接关闭错误，退出循环
-				if ne, ok := err.(net.Error); ok && ne.Timeout() {
-					continue
-				}
-				break
-			}
-			slog.Debug("收到消息===>", slog.String("msg", string(buf[:count])))
 		}
 		if !restart {
 			break

@@ -38,6 +38,7 @@ type Server struct {
 
 	OnAcceptSocket       network.SocketCallbackFunc
 	OnSocketDisConnected network.SocketCallbackFunc
+
 	ice.IceWorker
 	framework.CloseableObject
 }
@@ -60,6 +61,7 @@ func NewServer(conn net.PacketConn, isAgent bool) *Server {
 	}
 	svr.NetConn = conn
 	svr.IsClosed = false
+	svr.IceChannel = make(chan ice.IceObject)
 	svr.SetOnCloseHandler(svr)
 	return svr
 }
