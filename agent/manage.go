@@ -5,7 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"github.com/DeleteElf/zero-net/framework"
-	"github.com/DeleteElf/zero-net/framework/streams"
+	"github.com/DeleteElf/zero-net/framework/network"
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/DeleteElf/zero-net/server"
 	"github.com/deleteelf/goframework/utils/jsonhelper"
@@ -30,7 +30,7 @@ type Config struct {
 }
 
 type AgentStream struct {
-	Info   *streams.StreamInfo
+	Info   *network.StreamInfo
 	Stream *quic.Stream
 	Server *server.Server
 }
@@ -149,7 +149,7 @@ func (mgr *ManagePlatform) Hearts() {
 	slog.Debug("platform stop ping!")
 }
 
-func (mgr *ManagePlatform) ListenAgentConnect(onAcceptSocket, onDisconnect streams.SocketCallbackFunc) error {
+func (mgr *ManagePlatform) ListenAgentConnect(onAcceptSocket, onDisconnect network.SocketCallbackFunc) error {
 	for {
 		if mgr.wsConn == nil {
 			break
@@ -193,12 +193,12 @@ func (mgr *ManagePlatform) ListenAgentConnect(onAcceptSocket, onDisconnect strea
 			}
 			if mgr.Agents[proxyInfo.Idx] == nil { //如果这个代理还没有连接，则进行连接
 				slog.Debug("正在连接代理授权地址...", slog.String("addr", proxyInfo.ProxyAddr), slog.Int("idx", proxyInfo.Idx))
-				conn, err := streams.NewUdpSocketClient()
+				conn, err := network.NewUdpSocketClient()
 				if err != nil {
 					slog.Error("创建UDP客户端失败", slog.Any("err", err))
 					continue
 				}
-				proxyAddr, err := net.ResolveUDPAddr(streams.STREAM_NETWORK_UDP, proxyInfo.ProxyAddr)
+				proxyAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, proxyInfo.ProxyAddr)
 				if err != nil {
 					slog.Error("解析代理中心地址失败", slog.Any("err", err))
 					continue
@@ -221,7 +221,7 @@ func (mgr *ManagePlatform) ListenAgentConnect(onAcceptSocket, onDisconnect strea
 	return nil
 }
 
-func (mgr *ManagePlatform) GetServerSocket(clientId string) *streams.Socket {
+func (mgr *ManagePlatform) GetServerSocket(clientId string) *network.Socket {
 	if len(clientId) == 0 {
 		return nil
 	}

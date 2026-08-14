@@ -2,7 +2,7 @@ package tests
 
 import (
 	"github.com/DeleteElf/zero-net/client"
-	"github.com/DeleteElf/zero-net/framework/streams"
+	"github.com/DeleteElf/zero-net/framework/network"
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/quic-go/quic-go"
 	"log/slog"
@@ -55,7 +55,7 @@ func TestClient(t *testing.T) {
 		Allow0RTT:               true,
 		EnableDatagrams:         true,
 	}
-	err := cli.Connect(3, streams.STREAM_NETWORK_UDP, func(sock *streams.Socket) {
+	err := cli.Connect(3, network.STREAM_NETWORK_UDP, func(sock *network.Socket) {
 		slog.Debug("socket已经断开===》！", slog.String("clientId", sock.Id))
 	}) //创建udp网络
 

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"github.com/DeleteElf/zero-net/agent"
 	"github.com/DeleteElf/zero-net/client"
-	"github.com/DeleteElf/zero-net/framework/streams"
+	"github.com/DeleteElf/zero-net/framework/network"
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"log/slog"
 	"strconv"
@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func agentSocketHandler(sock *streams.Socket) {
+func agentSocketHandler(sock *network.Socket) {
 	if sock == nil {
 		slog.Error("客户端已经不存在！")
 		return
@@ -22,7 +22,7 @@ func agentSocketHandler(sock *streams.Socket) {
 	}
 }
 
-func angetMessageHandler(sock *streams.Socket, channelIndex int) {
+func angetMessageHandler(sock *network.Socket, channelIndex int) {
 	for {
 		if sock.IsClosed {
 			break
@@ -93,10 +93,10 @@ func TestHostAgent(t *testing.T) {
 		if testMgr.IsClosed { //如果服务已经关闭，则不再继续连接管理平台
 			break
 		}
-		if err := testMgr.ListenAgentConnect(func(sock *streams.Socket) {
+		if err := testMgr.ListenAgentConnect(func(sock *network.Socket) {
 			slog.Debug("新的客户端接入：", slog.String("id", sock.Id))
 			go agentSocketHandler(sock)
-		}, func(sock *streams.Socket) {
+		}, func(sock *network.Socket) {
 			slog.Debug("客户端断开连接：", slog.String("id", sock.Id))
 		}); err != nil {
 			slog.Debug("未与管理平台连接成功，5秒后重试！", slog.Any("err", err))
@@ -120,7 +120,7 @@ func ConnectClientAgent(request *agent.Requst, config *agent.Config) *client.Cli
 	cli := client.NewClient(proxy.ProxyAddr, request.CliId) //尝试连接本机服务
 	agt, err := agent.NewAgent(cli.ServerAddress, uint32(proxy.Idx), 0, config)
 	if err == nil && agt != nil {
-		_ = cli.ConnectToNet(3, agt.Socket, agt.RemoteAddress, func(sock *streams.Socket) {
+		_ = cli.ConnectToNet(3, agt.Socket, agt.RemoteAddress, func(sock *network.Socket) {
 			slog.Debug("socket已经断开===》！", slog.String("id", sock.Id))
 			if agt.Socket != nil {
 				slog.Debug("正在与代理断开连接...")
@@ -173,7 +173,7 @@ func TestClientAgent(t *testing.T) {
 		ProxyId: "A7C569D2-F0A7-7B0C-BB2A-E44D59D5A5EB",
 		Proxy:   true,
 		CliId:   "1a1f2dadcd90473bb684bcd02b9cc629",
-		NetType: "udp",
+		NetType: network.STREAM_NETWORK_UDP,
 	}
 	cfg := &agent.Config{
 		Version:  "1",
@@ -198,7 +198,7 @@ func TestMultiClientAgent(t *testing.T) {
 		ProxyId: "A7C569D2-F0A7-7B0C-BB2A-E44D59D5A5EB",
 		Proxy:   true,
 		CliId:   "1a1f2dadcd90473bb684bcd02b9cc629",
-		NetType: "udp",
+		NetType: network.STREAM_NETWORK_UDP,
 	}
 	cfg := &agent.Config{
 		Version:  "1",

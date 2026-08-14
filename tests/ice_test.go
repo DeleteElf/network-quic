@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/DeleteElf/zero-net/client"
-	"github.com/DeleteElf/zero-net/framework/streams"
+	"github.com/DeleteElf/zero-net/framework/network"
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/DeleteElf/zero-net/server"
 	"github.com/DeleteElf/zero-net/stunhelper"
@@ -22,21 +22,6 @@ import (
 	"time"
 )
 
-func DetectStun(stun, token string, conn net.PacketConn) (string, int) {
-	if len(stun) > 0 {
-		slog.Debug("配置了stun服务，正在准备探测！", slog.String("address", stun))
-		cli := stunhelper.NewClient()
-		err := cli.Connect(stun, token, conn)
-		if err == nil {
-			slog.Debug("你的公网 IP 地址 :", slog.Any("ip", cli.ExternalAddress.IP))
-			slog.Debug("你的公网映射端口 : ", slog.Int("port", cli.ExternalAddress.Port))
-			return cli.ExternalAddress.IP.String(), cli.ExternalAddress.Port
-		}
-		//client.Close()
-	}
-	return "", 0
-}
-
 func PunchHoleAsync(conn net.PacketConn, targetAddr net.Addr) error {
 	slog.Info("客户端：开始异步向服务端盲发 UDP 包冲刷 NAT 洞口...", slog.String("target", targetAddr.String()))
 	go func() {
@@ -45,7 +30,7 @@ func PunchHoleAsync(conn net.PacketConn, targetAddr net.Addr) error {
 		// 密集发送 20 个 UDP 包（持续 600ms），把客户端 NAT 防火墙对服务端的出口映射彻底打开
 		for i := 0; i < 1000; i++ {
 			_, _ = udpConn.WriteToUDP(pingMsg, targetAddr.(*net.UDPAddr))
-			time.Sleep(30 * time.Millisecond)
+			time.Sleep(20 * time.Millisecond)
 		}
 		slog.Debug("客户端：NAT 出口冲刷完成！")
 	}()
@@ -65,7 +50,7 @@ func PunchHole(conn net.PacketConn, targetAddr net.Addr, timeout time.Duration) 
 
 	// 1. 后台持续给服务端发包，保持客户端 NAT 洞口开启
 	go func() {
-		ticker := time.NewTicker(40 * time.Millisecond)
+		ticker := time.NewTicker(20 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
@@ -97,9 +82,9 @@ func PunchHole(conn net.PacketConn, targetAddr net.Addr, timeout time.Duration) 
 	}
 }
 
-func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, onDisconnect streams.SocketCallbackFunc) error {
+func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, onDisconnect network.SocketCallbackFunc) error {
 	var err error
-	cli.NetConn, err = streams.NewUdpSocketClient()
+	cli.NetConn, err = network.NewUdpSocketClient()
 	if err != nil {
 		slog.Error("创建UDP客户端失败", slog.Any("err", err))
 		cli.Close()
@@ -107,8 +92,8 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 	}
 	serverAddress := cli.ServerAddress
 	if len(cli.Stun) > 0 { //如果配置了stun服务器
-		localIp := stunhelper.GetLocalAddress(cli.Stun)
-		remoteAddress, port := DetectStun(cli.Stun, stunKey, cli.NetConn)
+		localIp, _ := stunhelper.GetLocalAddress(cli.Stun[0])
+		remoteAddress, port := cli.DetectStun(stunKey)
 
 		slog.Info("客户端 STUN 解析结果", slog.String("remoteAddress", remoteAddress), slog.Int("port", port))
 		if remoteAddress == "" || port == 0 {
@@ -159,13 +144,13 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 			serverAddress = net.JoinHostPort(sdpDatas[4], sdpDatas[5])
 		}
 	}
-	netAddr, err := net.ResolveUDPAddr(streams.STREAM_NETWORK_UDP, serverAddress)
+	netAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, serverAddress)
 	if err != nil {
 		slog.Error("解析服务端地址失败", slog.Any("err", err))
 		return err
 	}
 	if len(cli.Stun) > 0 {
-		err = PunchHole(cli.NetConn, netAddr, 15*time.Second)
+		err = PunchHole(cli.NetConn, netAddr, 20*time.Second)
 		if err != nil {
 			slog.Error("UDP 打洞失败，放弃 QUIC 连接", slog.Any("err", err))
 			return err
@@ -178,34 +163,19 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 func TestIceClient(t *testing.T) {
 	utils.InitLog(slog.LevelDebug, nil)   //初始化日志
 	cli := client.NewClient("", "test01") //尝试连接外网本机服务
-	cli.Stun = "stun:stun.l.google.com:19302"
+	cli.Stun = []string{"stun:stun.l.google.com:19302", "stun:stun.new0.com.cn:3478"}
 	//cli.Stun = "stun:stun.new0.com.cn:3478"
 
-	err := ConnectByStun(cli, "0DBDB1AE-CABD-F2BA-4F89-132A39EC90D1", "test", 3, func(sock *streams.Socket) {
+	err := ConnectByStun(cli, "0DBDB1AE-CABD-F2BA-4F89-132A39EC90D1", "test", 3, func(sock *network.Socket) {
 		slog.Debug("socket已经断开===》！", slog.String("clientId", sock.Id))
 	}) //创建udp网络
 
 	if err != nil {
 		return
 	}
-	slog.Info("客户端连接成功！", slog.Int("通道数", cli.Socket.ChannelCount))
-	for i := 0; i < cli.Socket.ChannelCount; i++ {
-		go receiveHandler(cli, i)
-	}
-	msg0 := "hello,i am channel 0 data from client"
-	slog.Info("正在向通道0发送数据", slog.String("msg", msg0))
-	_, _ = cli.Socket.Send(0, []byte(msg0))
-	msg1 := "hello,i am channel 1 data from client"
-	slog.Info("正在向通道1发送数据", slog.String("msg", msg1))
-	_, _ = cli.Socket.Send(1, []byte(msg1))
-
-	msg2 := "hello,i am channel 2 data from client"
-	slog.Info("正在向通道2发送数据", slog.String("msg", msg2))
-	_, _ = cli.Socket.Send(2, []byte(msg2))
-
 	//time.Sleep(time.Second * 3) //等待3秒，等他们通讯完成再退出
 	for {
-		if cli.IsClosed || cli.Socket.IsClosed {
+		if cli.IsClosed {
 			break
 		} else {
 			time.Sleep(time.Second * 10)
@@ -232,16 +202,16 @@ func TestIceServer(t *testing.T) {
 
 	// 1. 初始化 Server 实例并确保绑定端口/创建 NetConn
 	testServer = server.NewServer(nil, false) //server.NewServerByAddress("0.0.0.0:10001")
-	testServer.Stun = "stun:stun.l.google.com:19302"
+	testServer.Stun = []string{"stun:stun.l.google.com:19302", "stun:stun.new0.com.cn:3478"}
 	//testServer.Stun = "stun:stun.new0.com.cn:3478"
 	// ⚠️ 【关键修正】：确保 testServer.NetConn 不为 nil 后再调用 DetectStun
 	if testServer.NetConn == nil {
-		addr, _ := net.ResolveUDPAddr("udp", "0.0.0.0:10001")
-		conn, _ := net.ListenUDP("udp", addr)
+		addr, _ := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, "0.0.0.0:10001")
+		conn, _ := net.ListenUDP(network.STREAM_NETWORK_UDP, addr)
 		testServer.NetConn = conn
 	}
 
-	remoteAddress, port := DetectStun(testServer.Stun, "test", testServer.NetConn)
+	remoteAddress, port := testServer.DetectStun("test")
 	slog.Info("服务端 STUN 解析结果", slog.String("remoteAddress", remoteAddress), slog.Int("port", port))
 
 	iceMessage := make(chan string)
@@ -260,7 +230,7 @@ func TestIceServer(t *testing.T) {
 					result["session_id"] = body["session_id"].(string)
 				}
 
-				localAddress, err := net.ResolveUDPAddr("udp", ws.Conn.LocalAddr().String())
+				localAddress, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, ws.Conn.LocalAddr().String())
 				if err == nil {
 					sdpBody["type"] = "answer"
 					sdpBody["sdp"] = "candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localAddress.IP.String() + " rport 10001"
@@ -288,7 +258,7 @@ func TestIceServer(t *testing.T) {
 			slog.Error("连接发生错误", slog.Any("err", err))
 		}
 	}()
-	testServer.OnAcceptSocket = func(sock *streams.Socket) {
+	testServer.OnAcceptSocket = func(sock *network.Socket) {
 		slog.Debug("新的客户端接入：", slog.String("id", sock.Id))
 		go socketHandler(testServer, sock)
 	}
@@ -299,7 +269,7 @@ func TestIceServer(t *testing.T) {
 			case addr := <-iceMessage:
 				slog.Debug("收到请求探测新的地址", slog.String("addr", addr))
 				if len(addr) > 10 {
-					clientAddr, err := net.ResolveUDPAddr(streams.STREAM_NETWORK_UDP, addr)
+					clientAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, addr)
 					if err == nil {
 						_ = PunchHoleAsync(testServer.NetConn, clientAddr)
 					}
@@ -321,19 +291,24 @@ func TestIceServer(t *testing.T) {
 		//})
 
 		// 直接从底层的 net.PacketConn 中读取原生 UDP 数据包
-		_, remoteAddr, err := udpConn.ReadFromUDP(buf)
-		if testServer.IsClosed {
-			break
-		}
-		if err != nil {
-			slog.Warn("读取 UDP 数据包失败", slog.Any("err", err))
-			// 如果是超时或连接关闭错误，退出循环
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				continue
+		for {
+			if testServer.IsClosed {
+				break
 			}
-			break
+			_, _, err := udpConn.ReadFromUDP(buf)
+			if testServer.IsClosed {
+				break
+			}
+			if err != nil {
+				slog.Warn("读取 UDP 数据包失败", slog.Any("err", err))
+				// 如果是超时或连接关闭错误，退出循环
+				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+					continue
+				}
+				break
+			}
+			slog.Debug("收到消息===>", slog.String("msg", string(buf)))
 		}
-		slog.Debug("客户端接入成功！", slog.String("ip", remoteAddr.String()))
 		if !restart {
 			break
 		}

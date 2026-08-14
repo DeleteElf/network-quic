@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/DeleteElf/zero-net/framework"
-	"github.com/DeleteElf/zero-net/framework/streams"
+	"github.com/DeleteElf/zero-net/framework/network"
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/DeleteElf/zero-net/stunhelper"
 	"github.com/quic-go/quic-go"
@@ -19,18 +19,17 @@ import (
 // Client 客户端
 type Client struct {
 	Id string
-	//stun服务地址
-	Stun string
 	//外网地址
 	ExternalIp   string
 	ExternalPort int
 	//需要连接的服务端地址
 	ServerAddress string
-	NetConn       net.PacketConn
 	netAddr       net.Addr
 	//quicConn      *quic.Conn
-	Socket *streams.Socket
+	Socket *network.Socket
 	Config *quic.Config
+
+	stunhelper.StunClient
 	framework.CloseableObject
 }
 
@@ -43,20 +42,6 @@ func NewClient(addr string, id string) *Client {
 	cli.IsClosed = false
 	cli.SetOnCloseHandler(cli)
 	return cli
-}
-func (cli *Client) DetectStun(token string) {
-	if len(cli.Stun) > 0 {
-		slog.Debug("配置了stun服务，正在准备探测！", slog.String("address", cli.Stun))
-		client := stunhelper.NewClient()
-		err := client.Connect(cli.Stun, token, cli.NetConn)
-		if err == nil {
-			slog.Debug("你的公网 IP 地址 :", slog.Any("ip", client.ExternalAddress.IP))
-			slog.Debug("你的公网映射端口 : ", slog.Int("port", client.ExternalAddress.Port))
-			cli.ExternalIp = client.ExternalAddress.IP.String()
-			cli.ExternalPort = client.ExternalAddress.Port
-		}
-		//client.Close()
-	}
 }
 
 func (cli *Client) CloseChannel(channelId int) bool {
@@ -82,25 +67,25 @@ func (cli *Client) OnClosed() {
 	slog.Debug("客户端已经关闭")
 }
 
-func (cli *Client) Connect(channelCount int, networkType string, onDisconnect streams.SocketCallbackFunc) error {
-	if networkType != "udp" {
+func (cli *Client) Connect(channelCount int, networkType string, onDisconnect network.SocketCallbackFunc) error {
+	if networkType != network.STREAM_NETWORK_UDP {
 		return errors.New("暂时只支持udp连接！")
 	}
 	var err error
-	netConn, err := streams.NewUdpSocketClient()
+	netConn, err := network.NewUdpSocketClient()
 	if err != nil {
 		slog.Error("创建UDP客户端失败", slog.Any("err", err))
 		cli.Close()
 		return err
 	}
-	netAddr, err := net.ResolveUDPAddr(streams.STREAM_NETWORK_UDP, cli.ServerAddress)
+	netAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, cli.ServerAddress)
 	if err != nil {
 		slog.Error("解析服务端地址失败", slog.Any("err", err))
 		return err
 	}
 	return cli.ConnectToNet(channelCount, netConn, netAddr, onDisconnect)
 }
-func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.Addr, onDisconnect streams.SocketCallbackFunc) error {
+func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.Addr, onDisconnect network.SocketCallbackFunc) error {
 	if cli.Socket != nil {
 		return errors.New("当前客户端已经连接！")
 	}
@@ -126,15 +111,15 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 		slog.Info("远程连接失败！", slog.Any("err", err))
 		return err
 	}
-	cli.Socket = streams.NewSocket(cli.Id, channelCount, onDisconnect)
+	cli.Socket = network.NewSocket(cli.Id, channelCount, onDisconnect)
 	cli.Socket.Conn = quicConn
 	if cli.Socket.ChannelCount == 4 { //如果创建4个流，我们第4个流也是视频流，目前的版本暂时只有3个流
-		cli.Socket.StreamChannels[3].Type = streams.Video
+		cli.Socket.StreamChannels[3].Type = network.Video
 	}
 
 	slog.Info("客户端连接成功！", slog.Int("通道数", cli.Socket.ChannelCount))
 	for i := 0; i < channelCount; i++ {
-		info := streams.StreamInfo{
+		info := network.StreamInfo{
 			Id:    cli.Id,
 			Count: channelCount,
 			Ts:    time.Now().Unix(),
@@ -142,12 +127,12 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 			Type:  int(cli.Socket.StreamChannels[i].Type), //这里需要告诉服务端，是什么类型的流
 		}
 		switch cli.Socket.StreamChannels[i].Type {
-		case streams.Video: //暂时内置参数
+		case network.Video: //暂时内置参数
 			info.DataShards = 10
 			info.ParityShards = 3
 			cli.Socket.SetFecParam(i, info.DataShards, info.ParityShards)
 			break
-		case streams.Audio: //暂时内置参数
+		case network.Audio: //暂时内置参数
 			info.DataShards = 4
 			info.ParityShards = 2
 			cli.Socket.SetFecParam(i, info.DataShards, info.ParityShards)
@@ -156,7 +141,7 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 			break
 		}
 
-		stream, err := streams.CreateStream(cli.Socket.Conn, info) //创建并打开流
+		stream, err := network.CreateStream(cli.Socket.Conn, info) //创建并打开流
 		if err != nil {
 			cli.Close()
 			return err

@@ -113,7 +113,7 @@ package tests
 //			serverAddress = net.JoinHostPort(sdpDatas[4], sdpDatas[5])
 //		}
 //	}
-//	netAddr, err := net.ResolveUDPAddr(streams.STREAM_NETWORK_UDP, serverAddress)
+//	netAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, serverAddress)
 //	if err != nil {
 //		slog.Error("解析服务端地址失败", slog.Any("err", err))
 //		return err
@@ -189,8 +189,8 @@ package tests
 //
 //	// ⚠️ 【关键修正】：确保 testServer.NetConn 不为 nil 后再调用 DetectStun
 //	if testServer.NetConn == nil {
-//		addr, _ := net.ResolveUDPAddr("udp", "0.0.0.0:10001")
-//		testServer.NetConn, _ = net.ListenUDP("udp", addr)
+//		addr, _ := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, "0.0.0.0:10001")
+//		testServer.NetConn, _ = net.ListenUDP(network.STREAM_NETWORK_UDP, addr)
 //	}
 //
 //	remoteAddress, port := DetectStun(testServer.Stun, "test", testServer.NetConn)
@@ -212,7 +212,7 @@ package tests
 //					result["session_id"] = body["session_id"].(string)
 //				}
 //
-//				localAddress, err := net.ResolveUDPAddr("udp", ws.Conn.LocalAddr().String())
+//				localAddress, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, ws.Conn.LocalAddr().String())
 //				if err == nil {
 //					sdpBody["type"] = "answer"
 //					sdpBody["sdp"] = "candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localAddress.IP.String() + " rport 10001"
@@ -250,7 +250,7 @@ package tests
 //			case addr := <-iceMessage:
 //				slog.Debug("收到请求探测新的地址", slog.String("addr", addr))
 //				if len(addr) > 10 {
-//					clientAddr, err := net.ResolveUDPAddr(streams.STREAM_NETWORK_UDP, addr)
+//					clientAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, addr)
 //					if err == nil {
 //						go func() {
 //							for i := 0; i < 30; i++ {

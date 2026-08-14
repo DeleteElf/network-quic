@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/DeleteElf/zero-net/framework/network"
 	"io"
 	"log/slog"
 	"net"
@@ -86,7 +87,7 @@ func GetProxy(req *Requst) (*ProxyInfo, error) {
 			proxy.ProxyAddr = proxy.ProxyExternalIp + ":" + proxy.ProxyExternalPort
 		}
 		slog.Debug("获取到的代理地址：", slog.String("address", proxy.ProxyAddr), slog.Int("idx", proxy.Idx))
-		if _, err := net.ResolveUDPAddr("udp", proxy.ProxyAddr); err != nil {
+		if _, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, proxy.ProxyAddr); err != nil {
 			return nil, fmt.Errorf("mgr resp proxy addr %s err: %v", proxy.ProxyAddr, err)
 		}
 	}

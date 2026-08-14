@@ -1,4 +1,4 @@
-package streams
+package network
 
 import (
 	"context"
@@ -26,7 +26,7 @@ const (
 	STREAM_SIGN_SALT_NEWEST = "fcfd186998e061eb3e297be7da42fe017fc8269f2963e2977502c676bae1068c"
 
 	STREAM_NETWORK_TCP = "tcp"
-	STREAM_NETWORK_UDP = "udp"
+	STREAM_NETWORK_UDP = "udp4"
 	DefaultBufferSize  = 7 * 1024 * 1024
 
 	STREAM_TYPE_NORMAL = 0 //普通数据流，我们走go的标准stream

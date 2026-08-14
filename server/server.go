@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"github.com/DeleteElf/zero-net/framework"
-	"github.com/DeleteElf/zero-net/framework/streams"
+	"github.com/DeleteElf/zero-net/framework/network"
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/DeleteElf/zero-net/stunhelper"
 	"github.com/quic-go/quic-go"
@@ -17,35 +17,34 @@ import (
 const MaxStreamCount = 6
 
 type Stream struct {
-	Info   *streams.StreamInfo
+	Info   *network.StreamInfo
 	Stream *quic.Stream
 	Server *Server
 }
 
 type Server struct {
-	//stun服务地址
-	Stun string
+	////stun服务地址
+	//Stun []string
 	//外网地址
 	ExternalIp   string
 	ExternalPort int
 
 	isAgent  bool
-	NetConn  net.PacketConn
 	listener *quic.Listener
-	Sockets  map[string]*streams.Socket
+	Sockets  map[string]*network.Socket
 
 	Config *quic.Config
 	lock   sync.Mutex
 
-	OnAcceptSocket       streams.SocketCallbackFunc
-	OnSocketDisConnected streams.SocketCallbackFunc
-
+	OnAcceptSocket       network.SocketCallbackFunc
+	OnSocketDisConnected network.SocketCallbackFunc
+	stunhelper.StunClient
 	framework.CloseableObject
 }
 
 // NewServerByAddress 创建新的服务实例，根据设置的地址监听
 func NewServerByAddress(address string) *Server {
-	netConn, err := streams.NewUdpSocketServer(address)
+	netConn, err := network.NewUdpSocketServer(address)
 	if err != nil {
 		slog.Error("创建socket服务失败！", slog.Any("err", err))
 		return nil
@@ -57,9 +56,9 @@ func NewServerByAddress(address string) *Server {
 func NewServer(conn net.PacketConn, isAgent bool) *Server {
 	svr := &Server{
 		isAgent: isAgent,
-		NetConn: conn,
-		Sockets: make(map[string]*streams.Socket),
+		Sockets: make(map[string]*network.Socket),
 	}
+	svr.NetConn = conn
 	svr.IsClosed = false
 	svr.SetOnCloseHandler(svr)
 	return svr
@@ -87,22 +86,7 @@ func (s *Server) OnClosed() {
 	slog.Debug("服务端已经关闭")
 }
 
-func (s *Server) DetectStun(token string) {
-	if len(s.Stun) > 0 {
-		slog.Debug("配置了stun服务，正在准备探测！", slog.String("address", s.Stun))
-		cli := stunhelper.NewClient()
-		err := cli.Connect(s.Stun, token, s.NetConn)
-		if err == nil {
-			slog.Debug("你的公网 IP 地址 :", slog.Any("ip", cli.ExternalAddress.IP))
-			slog.Debug("你的公网映射端口 : ", slog.Int("port", cli.ExternalAddress.Port))
-			s.ExternalIp = cli.ExternalAddress.IP.String()
-			s.ExternalPort = cli.ExternalAddress.Port
-		}
-		//cli.Close()
-	}
-}
-
-func (s *Server) StartListen(onDisconnect streams.SocketCallbackFunc) {
+func (s *Server) StartListen(onDisconnect network.SocketCallbackFunc) {
 	tlsConfig := utils.GenTLSConfig()
 	if s.Config == nil {
 		s.Config = &quic.Config{
@@ -137,6 +121,7 @@ func (s *Server) StartListen(onDisconnect streams.SocketCallbackFunc) {
 			break
 		}
 		quicConn, err := s.listener.Accept(context.TODO())
+		//quicConn.ConnectionStats().SmoothedRTT //获取网络状态相关参数
 		if s.IsClosed { //不再接受新的连接
 			break
 		}
@@ -150,7 +135,7 @@ func (s *Server) StartListen(onDisconnect streams.SocketCallbackFunc) {
 	slog.Info("服务停止监听")
 }
 
-func (s *Server) acceptConnection(quicConn *quic.Conn, onDisconnect streams.SocketCallbackFunc) {
+func (s *Server) acceptConnection(quicConn *quic.Conn, onDisconnect network.SocketCallbackFunc) {
 	defer func() {
 		slog.Info("连接断开", slog.Any("addr", quicConn.RemoteAddr()))
 		_ = quicConn.CloseWithError(0, "other")
@@ -171,28 +156,28 @@ func (s *Server) acceptConnection(quicConn *quic.Conn, onDisconnect streams.Sock
 	}
 }
 
-func (s *Server) processStream(quicConn *quic.Conn, stream *quic.Stream, onDisconnect streams.SocketCallbackFunc) {
+func (s *Server) processStream(quicConn *quic.Conn, stream *quic.Stream, onDisconnect network.SocketCallbackFunc) {
 	streamId := stream.StreamID()
-	info, err := streams.ReadStreamInfo(stream)
+	info, err := network.ReadStreamInfo(stream)
 	if err != nil {
 		slog.Error("获取流信息失败", slog.Any("streamId", streamId), slog.Any("err", err))
-		_ = streams.CloseStream(stream)
+		_ = network.CloseStream(stream)
 		return
 	}
-	if err := streams.ValidateStreamInfo(info); err != nil {
+	if err := network.ValidateStreamInfo(info); err != nil {
 		slog.Warn("无效的流信息", slog.Any("err", err))
-		_ = streams.CloseStream(stream)
+		_ = network.CloseStream(stream)
 		return
 	}
 	if info.Index < 0 || info.Index >= MaxStreamCount {
 		slog.Error("无效的通道", slog.Int("chn", info.Index))
-		_ = streams.CloseStream(stream)
+		_ = network.CloseStream(stream)
 		return
 	}
 	slog.Info("启动通道通讯", slog.Int("chn", info.Index), slog.Any("streamId", streamId), slog.String("clientId", info.Id))
 	s.lock.Lock()
 	if s.Sockets[info.Id] == nil {
-		socket := streams.NewSocket(info.Id, info.Count, func(sock *streams.Socket) {
+		socket := network.NewSocket(info.Id, info.Count, func(sock *network.Socket) {
 			if s.Sockets[sock.Id] != nil {
 				s.Sockets[sock.Id] = nil
 				delete(s.Sockets, sock.Id)
@@ -230,7 +215,7 @@ func (s *Server) CloseSocket(id string) error {
 	}
 	return nil
 }
-func (s *Server) GetSocket(id string) *streams.Socket {
+func (s *Server) GetSocket(id string) *network.Socket {
 	if s.Sockets[id] != nil {
 		return s.Sockets[id]
 	}

@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"github.com/DeleteElf/zero-net/agent"
 	"github.com/DeleteElf/zero-net/client"
-	"github.com/DeleteElf/zero-net/framework/streams"
+	"github.com/DeleteElf/zero-net/framework/network"
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/DeleteElf/zero-net/server"
 	"github.com/DeleteElf/zero-net/websocket"
@@ -31,7 +31,7 @@ func FromBytes(data *C.NetworkData) []byte {
 var serverCtx *server.Server
 var clientCtx *client.Client
 var managerCtx *agent.ManagePlatform
-var socketMap map[string]*streams.Socket
+var socketMap map[string]*network.Socket
 
 //var channelCaseList []reflect.SelectCase //这个如果没有每次重新构建，似乎有问题
 
@@ -73,7 +73,7 @@ func InitNetwork() C.int {
 		utils.InitLog(slog.LevelDebug, nil)
 	}
 	utils.InitProcess()
-	socketMap = make(map[string]*streams.Socket) //初始化全局链路缓存
+	socketMap = make(map[string]*network.Socket) //初始化全局链路缓存
 	return C.Success
 }
 
@@ -130,7 +130,7 @@ func ClientConnect(channelCount C.int, config *C.NetworkData) C.int {
 	address := jsonObject["address"].(string)
 	id := jsonObject["id"].(string)
 	networkType := jsonObject["networkType"].(string)
-	if networkType != streams.STREAM_NETWORK_UDP {
+	if networkType != network.STREAM_NETWORK_UDP {
 		return C.ErrorParam
 	}
 	if jsonObject["proxy_id"] != nil { //如果配置了代理，则使用代理
@@ -158,7 +158,7 @@ func ClientConnect(channelCount C.int, config *C.NetworkData) C.int {
 		agt, err := agent.NewAgent(clientCtx.ServerAddress, uint32(proxy.Idx), 0, cfg)
 		if err == nil && agt != nil {
 			sock := agt.Socket
-			clientCtx.ConnectToNet(3, sock, agt.RemoteAddress, func(sock *streams.Socket) {
+			clientCtx.ConnectToNet(3, sock, agt.RemoteAddress, func(sock *network.Socket) {
 				if agt.Socket != nil {
 					slog.Debug("正在与代理断开连接...")
 					_ = agt.Socket.Close()
@@ -170,7 +170,7 @@ func ClientConnect(channelCount C.int, config *C.NetworkData) C.int {
 		}
 	} else {
 		clientCtx = client.NewClient(address, id) //尝试连接本机服务
-		err = clientCtx.Connect(int(channelCount), streams.STREAM_NETWORK_UDP, func(sock *streams.Socket) {
+		err = clientCtx.Connect(int(channelCount), network.STREAM_NETWORK_UDP, func(sock *network.Socket) {
 			if onDisConnected != nil {
 				C.callMessageCallback(onDisConnected, C.CString(sock.Id))
 			}
@@ -304,7 +304,7 @@ func ServerCreate(config *C.NetworkData) C.int {
 	}
 	address := jsonObject["address"].(string)
 	networkType := jsonObject["networkType"].(string)
-	if networkType != streams.STREAM_NETWORK_UDP {
+	if networkType != network.STREAM_NETWORK_UDP {
 		return C.ErrorParam
 	}
 	serverCtx = server.NewServerByAddress(address) //尝试连接本机服务
@@ -313,13 +313,13 @@ func ServerCreate(config *C.NetworkData) C.int {
 		serverCtx.Stun = stun
 		serverCtx.DetectStun(jsonObject["token"].(string))
 	}
-	serverCtx.OnAcceptSocket = func(sock *streams.Socket) {
+	serverCtx.OnAcceptSocket = func(sock *network.Socket) {
 		socketMap[sock.Id] = sock
 		if onAcceptSocket != nil {
 			C.callMessageCallback(onAcceptSocket, C.CString(sock.Id))
 		}
 	}
-	serverCtx.OnSocketDisConnected = func(sock *streams.Socket) {
+	serverCtx.OnSocketDisConnected = func(sock *network.Socket) {
 		if onDisConnected != nil {
 			C.callMessageCallback(onDisConnected, C.CString(sock.Id))
 		}
@@ -331,7 +331,7 @@ func ServerCreate(config *C.NetworkData) C.int {
 //export ServerClose
 func ServerClose() C.int {
 	onAcceptSocket = nil
-	socketMap = make(map[string]*streams.Socket) //清空map
+	socketMap = make(map[string]*network.Socket) //清空map
 	if managerCtx != nil {
 		managerCtx.Close()
 		managerCtx = nil
@@ -349,7 +349,7 @@ func ServerStartListen() C.int {
 		slog.Warn("未检测到有效的服务上下文！")
 		return C.ErrorContext
 	}
-	go serverCtx.StartListen(func(sock *streams.Socket) {
+	go serverCtx.StartListen(func(sock *network.Socket) {
 		if onDisConnected != nil {
 			C.callMessageCallback(onDisConnected, C.CString(sock.Id))
 		}
@@ -403,7 +403,7 @@ func ServerSocketSend(clientId *C.char, chnIdx C.int, data *C.NetworkData) C.int
 	return C.Closed
 }
 
-var currentBuffer *streams.StreamChannelData
+var currentBuffer *network.StreamChannelData
 
 //export ServerSocketReceive
 func ServerSocketReceive(data *C.ClientData) C.int {
@@ -440,7 +440,7 @@ func ServerSocketReceive(data *C.ClientData) C.int {
 			if !ok {
 				return C.ErrorClose
 			}
-			buffer := value.Interface().(streams.StreamChannelData)
+			buffer := value.Interface().(network.StreamChannelData)
 			currentBuffer = &buffer
 		} else {
 			slog.Debug("获取到的通道数量为0！")
@@ -561,13 +561,13 @@ func ProxyServerCreate(config *C.NetworkData) C.int {
 			}
 			managerCtx.ConnectToPlatform()
 			go managerCtx.Hearts() //维持心跳
-			err1 := managerCtx.ListenAgentConnect(func(sock *streams.Socket) {
+			err1 := managerCtx.ListenAgentConnect(func(sock *network.Socket) {
 				socketMap[sock.Id] = sock
 				slog.Debug("新的客户端接入：", slog.String("id", sock.Id))
 				if onAcceptSocket != nil {
 					C.callMessageCallback(onAcceptSocket, C.CString(sock.Id))
 				}
-			}, func(sock *streams.Socket) {
+			}, func(sock *network.Socket) {
 				if onDisConnected != nil {
 					C.callMessageCallback(onDisConnected, C.CString(sock.Id))
 				}

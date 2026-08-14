@@ -2,7 +2,7 @@ package tests
 
 import (
 	"fmt"
-	"github.com/DeleteElf/zero-net/framework/streams"
+	"github.com/DeleteElf/zero-net/framework/network"
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/DeleteElf/zero-net/server"
 	"github.com/quic-go/quic-go"
@@ -14,7 +14,7 @@ import (
 
 var restart bool = false
 
-func socketHandler(svr *server.Server, sock *streams.Socket) {
+func socketHandler(svr *server.Server, sock *network.Socket) {
 	if sock == nil {
 		slog.Error("客户端已经不存在！")
 		return
@@ -24,7 +24,7 @@ func socketHandler(svr *server.Server, sock *streams.Socket) {
 	}
 }
 
-func messageHandler(svr *server.Server, sock *streams.Socket, channelIndex int) {
+func messageHandler(svr *server.Server, sock *network.Socket, channelIndex int) {
 	for {
 		if sock.IsClosed {
 			break
@@ -112,7 +112,7 @@ func TestServer(t *testing.T) {
 			slog.Debug("服务端重新启动监听！")
 			restart = false
 		}
-		testServer.OnAcceptSocket = func(sock *streams.Socket) {
+		testServer.OnAcceptSocket = func(sock *network.Socket) {
 			slog.Debug("新的客户端接入：", slog.String("id", sock.Id))
 			go socketHandler(testServer, sock)
 		}
@@ -126,7 +126,7 @@ func TestServer(t *testing.T) {
 			Allow0RTT:               true,
 			EnableDatagrams:         true, //允许直接传输udp
 		}
-		testServer.StartListen(func(sock *streams.Socket) {
+		testServer.StartListen(func(sock *network.Socket) {
 			slog.Debug("客户端断开连接：", slog.String("id", sock.Id))
 		})
 		slog.Debug("服务端退出监听！")

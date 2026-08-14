@@ -3,7 +3,7 @@ package agent
 import (
 	"encoding/binary"
 	"fmt"
-	"github.com/DeleteElf/zero-net/framework/streams"
+	"github.com/DeleteElf/zero-net/framework/network"
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/DeleteElf/zero-net/server"
 	"log/slog"
@@ -96,12 +96,12 @@ func NewAgentService(conn net.PacketConn, proxyAddr net.Addr, idx uint32, flag b
 
 // NewAgent 创建新的客户端代理
 func NewAgent(addr string, idx uint32, flag byte, config *Config) (*Agent, error) {
-	conn, err := streams.NewUdpSocketClient()
+	conn, err := network.NewUdpSocketClient()
 	if err != nil {
 		slog.Error("创建UDP客户端失败", slog.Any("err", err))
 		return nil, err
 	}
-	proxyAddr, err := net.ResolveUDPAddr(streams.STREAM_NETWORK_UDP, addr)
+	proxyAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, addr)
 	if err != nil {
 		slog.Error("解析代理地址失败", slog.Any("err", err))
 		return nil, err

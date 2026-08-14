@@ -3,6 +3,7 @@ package stunhelper
 import (
 	"context"
 	"github.com/DeleteElf/zero-net/framework"
+	"github.com/DeleteElf/zero-net/framework/network"
 	"github.com/pion/stun/v3"
 	"log/slog"
 	"net"
@@ -12,34 +13,39 @@ import (
 )
 
 type Client struct {
+	//stun服务地址
+	Stun []string
+
 	ExternalAddress stun.XORMappedAddress
 	LocalAddress    stun.XORMappedAddress
 	framework.CloseableObject
 }
 
-func GetLocalAddress(stunAddress string) string {
+func NewClient() *Client {
+	return &Client{}
+}
+
+func GetLocalAddress(stunAddress string) (ip string, port int) {
 	uri, err := stun.ParseURI(stunAddress)
 	if err != nil {
 		slog.Error("stun地址配置错误", slog.Any("err", err))
-		return ""
+		return ip, port
 	}
 	addr := net.JoinHostPort(uri.Host, strconv.Itoa(uri.Port))
-	serverAddr, err := net.ResolveUDPAddr("udp", addr)
+	serverAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, addr)
 	if err != nil {
 		slog.Error("stun地址解析失败！", slog.Any("err", err))
-		return ""
+		return ip, port
 	}
-	conn, err := net.DialUDP("udp", nil, serverAddr)
+	conn, err := net.DialUDP(network.STREAM_NETWORK_UDP, nil, serverAddr)
 	if err != nil {
 		slog.Error("连接目标服务器失败", slog.Any("err", err))
-		return ""
+		return ip, port
 	}
 	datas := strings.Split(conn.LocalAddr().String(), ":")
-	return datas[0]
-}
-
-func NewClient() *Client {
-	return &Client{}
+	ip = datas[0]
+	port, _ = strconv.Atoi(datas[1])
+	return ip, port
 }
 
 func (c *Client) Connect(address, token string, conn net.PacketConn) error {
@@ -56,7 +62,7 @@ func (c *Client) Connect(address, token string, conn net.PacketConn) error {
 	} else {
 		var stunAddr *net.UDPAddr
 		addr := net.JoinHostPort(uri.Host, strconv.Itoa(uri.Port))
-		stunAddr, err = net.ResolveUDPAddr("udp", addr)
+		stunAddr, err = net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, addr)
 		netConn := NewNetPacketConnection(conn, stunAddr)
 		cli, err = stun.NewClient(netConn, stun.WithRTO(2*time.Second))
 		slog.Debug("本地局域网地址：", slog.String("ip", conn.LocalAddr().String()))

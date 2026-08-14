@@ -2,30 +2,30 @@ package tests
 
 import (
 	"fmt"
-	"github.com/DeleteElf/zero-net/framework/streams"
+	"github.com/DeleteElf/zero-net/framework/network"
 	"testing"
 )
 
 func TestStreamChannel(t *testing.T) {
 	channelCount := 3
 	testChannelIndex := 2
-	testData := streams.StreamChannelData{
+	testData := network.StreamChannelData{
 		ChannelId: testChannelIndex,
 		Offset:    0,
 		Data:      []byte("test787899999999999999999999999999999999999999999999999999999999999999999999999997893445342432"),
 	}
 
-	var channels []*streams.StreamChannel
-	channels = make([]*streams.StreamChannel, channelCount)
+	var channels []*network.StreamChannel
+	channels = make([]*network.StreamChannel, channelCount)
 	fmt.Println("开始创建通道")
 	for i := 0; i < 3; i++ {
-		channels[i] = streams.NewStreamChannel("test001", i) // make(streams.StreamChannel)
+		channels[i] = network.NewStreamChannel("test001", i) // make(streams.StreamChannel)
 	}
 	if channels[0].Channel != nil {
 		fmt.Println("通道校验成功")
 	}
-	var currentBuffers []*streams.StreamChannelData
-	currentBuffers = make([]*streams.StreamChannelData, channelCount)
+	var currentBuffers []*network.StreamChannelData
+	currentBuffers = make([]*network.StreamChannelData, channelCount)
 	msg := fmt.Sprintf("缓存长度:%d", len(currentBuffers))
 	fmt.Println(msg)
 
@@ -80,7 +80,7 @@ func TestStreamChannel(t *testing.T) {
 	if currentBuffers[0] != nil { //当前缓存没有工作时
 		fmt.Println("开始清除数据")
 		currentBuffers[0] = nil
-		currentBuffers = make([]*streams.StreamChannelData, 0)
+		currentBuffers = make([]*network.StreamChannelData, 0)
 	}
 	if len(currentBuffers) == 0 {
 		fmt.Println("校验清除完成！")
