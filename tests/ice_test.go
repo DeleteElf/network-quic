@@ -72,7 +72,7 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 	}
 	if len(cli.Stun) > 0 {
 		stopChannel := make(chan struct{})
-		cli.PunchHole(netAddr, cli.SessionId, time.Second, stopChannel)
+		cli.PunchHole(netAddr, cli.SessionId, 20*time.Second, stopChannel)
 		body, err := network.HttpRequest("https://36.249.161.74:3005/ice_state?device_id=0A76DE8C-1AB1-35C3-A137-FC9E10B1EF9F",
 			http.MethodGet, token, nil)
 		//close(stopChannel)
