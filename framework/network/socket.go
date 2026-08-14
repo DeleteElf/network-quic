@@ -47,14 +47,14 @@ func NewUdpSocketClient() (*net.UDPConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = conn.SetReadBuffer(DefaultBufferSize)
-	if err != nil {
-		return nil, err
-	}
-	err = conn.SetWriteBuffer(DefaultBufferSize)
-	if err != nil {
-		return nil, err
-	}
+	//err = conn.SetReadBuffer(DefaultBufferSize)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//err = conn.SetWriteBuffer(DefaultBufferSize)
+	//if err != nil {
+	//	return nil, err
+	//}
 	return conn, nil
 }
 

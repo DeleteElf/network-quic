@@ -66,10 +66,10 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 	}
 	slog.Info("服务端：开始异步向客户端盲发 UDP 包冲刷 NAT 洞口...", slog.String("target", targetAddr.String()))
 	go func() {
-		//for i := 0; i < 1; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
-		_, _ = iw.NetConn.WriteTo([]byte(message), targetAddr)
-		time.Sleep(20 * time.Millisecond)
-		//}
+		for i := 0; i < 10; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
+			_, _ = iw.NetConn.WriteTo([]byte(message), targetAddr)
+			time.Sleep(20 * time.Millisecond)
+		}
 		slog.Debug("服务端：NAT 出口首次冲刷完成！")
 	}()
 	go func() {
@@ -101,7 +101,7 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 				slog.Debug("客户端打洞超时/失败: %w", err)
 			}
 			if isFirst {
-				go func() { //再连续发10次
+				go func() {                   //再连续发10次
 					for i := 0; i < 10; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
 						_, _ = iw.NetConn.WriteTo([]byte(message), targetAddr)
 						time.Sleep(20 * time.Millisecond)
