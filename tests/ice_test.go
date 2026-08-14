@@ -139,8 +139,6 @@ func TestIceServer(t *testing.T) {
 	remoteAddress, port := testServer.DetectStun("test")
 	slog.Info("服务端 STUN 解析结果", slog.String("remoteAddress", remoteAddress), slog.Int("port", port))
 
-	//iceMessage := make(chan utils.JsonObject)
-
 	ws.OnMessage = func(msg string) {
 		data, err := utils.GetJsonObject([]byte(msg))
 		if err == nil && data["data"] != nil {
