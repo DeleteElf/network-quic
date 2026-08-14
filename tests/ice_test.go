@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"github.com/DeleteElf/zero-net/client"
 	"github.com/DeleteElf/zero-net/framework/network"
 	"github.com/DeleteElf/zero-net/framework/utils"
@@ -21,66 +20,6 @@ import (
 	"testing"
 	"time"
 )
-
-func PunchHoleAsync(conn net.PacketConn, targetAddr net.Addr) error {
-	slog.Info("客户端：开始异步向服务端盲发 UDP 包冲刷 NAT 洞口...", slog.String("target", targetAddr.String()))
-	go func() {
-		pingMsg := []byte("{\"action\":\"ping\",\"from\":\"ice-certification\"}")
-		udpConn := conn.(*net.UDPConn)
-		// 密集发送 20 个 UDP 包（持续 600ms），把客户端 NAT 防火墙对服务端的出口映射彻底打开
-		for i := 0; i < 10; i++ {
-			_, _ = udpConn.WriteToUDP(pingMsg, targetAddr.(*net.UDPAddr))
-			time.Sleep(20 * time.Millisecond)
-		}
-		slog.Debug("客户端：NAT 出口冲刷完成！")
-	}()
-	return nil
-}
-
-// 【客户端打洞】：持续向服务端发包开洞，并等待服务端的回应
-func PunchHole(conn net.PacketConn, targetAddr net.Addr, timeout time.Duration) error {
-	slog.Info("客户端：开始与目标服务器进行 UDP 双向打洞...", slog.String("target", targetAddr.String()))
-	udpConn := conn.(*net.UDPConn)
-	_ = conn.SetReadDeadline(time.Now().Add(timeout))
-	defer conn.SetReadDeadline(time.Time{})
-
-	pingMsg := []byte("{\"action\":\"ping\",\"from\":\"ice-certification\"}")
-	buf := make([]byte, 1024)
-	stopChan := make(chan struct{})
-
-	// 1. 后台持续给服务端发包，保持客户端 NAT 洞口开启
-	go func() {
-		ticker := time.NewTicker(20 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stopChan:
-				return
-			case <-ticker.C:
-				_, _ = udpConn.WriteToUDP(pingMsg, targetAddr.(*net.UDPAddr))
-			}
-		}
-	}()
-
-	// 2. 阻塞接收服务端的打洞包
-	for {
-		n, addr, err := udpConn.ReadFromUDP(buf)
-		if err != nil {
-			close(stopChan)
-			return fmt.Errorf("客户端打洞超时/失败: %w", err)
-		}
-
-		recvStr := string(buf[:n])
-		slog.Debug("客户端收到打洞回包", slog.String("from", addr.String()), slog.String("data", recvStr))
-
-		// 匹配来自服务端明确的冰打洞包
-		if strings.Contains(recvStr, "ice-certification") {
-			slog.Info("🎉 UDP 双向打洞成功！洞口已建立，准备发起 QUIC 握手")
-			close(stopChan)
-			return nil
-		}
-	}
-}
 
 func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, onDisconnect network.SocketCallbackFunc) error {
 	var err error
@@ -141,7 +80,11 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 		if result["data"] != nil {
 			sdpData := result["data"].(map[string]interface{})
 			sdpDatas := strings.Split(sdpData["sdp"].(string), " ")
+
 			serverAddress = net.JoinHostPort(sdpDatas[4], sdpDatas[5])
+		}
+		if result["session_id"] != nil {
+			cli.SessionId = result["session_id"].(string)
 		}
 	}
 	netAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, serverAddress)
@@ -150,7 +93,7 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 		return err
 	}
 	if len(cli.Stun) > 0 {
-		err = PunchHole(cli.NetConn, netAddr, time.Second)
+		err = cli.PunchHole(netAddr, cli.SessionId, time.Second)
 		if err != nil {
 			slog.Error("UDP 打洞失败，放弃 QUIC 连接", slog.Any("err", err))
 			return err
@@ -214,7 +157,7 @@ func TestIceServer(t *testing.T) {
 	remoteAddress, port := testServer.DetectStun("test")
 	slog.Info("服务端 STUN 解析结果", slog.String("remoteAddress", remoteAddress), slog.Int("port", port))
 
-	iceMessage := make(chan string)
+	//iceMessage := make(chan jsonhelper.JsonObject)
 
 	ws.OnMessage = func(msg string) {
 		data, err := jsonhelper.GetJsonObject([]byte(msg))
@@ -226,8 +169,10 @@ func TestIceServer(t *testing.T) {
 				result["success"] = "true"
 				result["action"] = data["action"].(string)
 				result["type"] = "response"
+				sessionId := ""
 				if body["session_id"] != nil {
-					result["session_id"] = body["session_id"].(string)
+					sessionId = body["session_id"].(string)
+					result["session_id"] = sessionId
 				}
 
 				localAddress, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, ws.Conn.LocalAddr().String())
@@ -244,7 +189,16 @@ func TestIceServer(t *testing.T) {
 						datas := strings.Split(body["sdp"].(string), " ")
 						if len(datas) >= 6 {
 							addr := net.JoinHostPort(datas[4], datas[5])
-							iceMessage <- addr
+							slog.Debug("收到请求探测新的地址", slog.String("addr", addr))
+							if len(addr) > 10 {
+								go func() {
+									clientAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, addr)
+									if err == nil {
+										_ = testServer.PunchHoleAsync(clientAddr, sessionId)
+									}
+								}()
+							}
+							//iceMessage <- addr
 						}
 					}
 				}
@@ -263,21 +217,23 @@ func TestIceServer(t *testing.T) {
 		go socketHandler(testServer, sock)
 	}
 	// 打洞监听协程
-	go func() {
-		for {
-			select {
-			case addr := <-iceMessage:
-				slog.Debug("收到请求探测新的地址", slog.String("addr", addr))
-				if len(addr) > 10 {
-					clientAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, addr)
-					if err == nil {
-						_ = PunchHoleAsync(testServer.NetConn, clientAddr)
-					}
-				}
-				break
-			}
-		}
-	}()
+	//go func() {
+	//	for {
+	//		select {
+	//		case msg := <-iceMessage:
+	//			addr := msg["address"].(string)
+	//			sessionId := msg["session_id"].(string)
+	//			slog.Debug("收到请求探测新的地址", slog.String("addr", addr))
+	//			if len(addr) > 10 {
+	//				clientAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, addr)
+	//				if err == nil {
+	//					_ = testServer.PunchHoleAsync(clientAddr, sessionId)
+	//				}
+	//			}
+	//			break
+	//		}
+	//	}
+	//}()
 	buf := make([]byte, 65535) // UDP 数据包最大 Buffer
 	udpConn := testServer.NetConn.(*net.UDPConn)
 	for {
