@@ -1,4 +1,4 @@
-package stunhelper
+package ice
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-type Client struct {
+type StunClient struct {
 	//stun服务地址
 	Stun []string
 
@@ -21,8 +21,8 @@ type Client struct {
 	framework.CloseableObject
 }
 
-func NewClient() *Client {
-	return &Client{}
+func NewStunClient() *StunClient {
+	return &StunClient{}
 }
 
 func GetLocalAddress(stunAddress string) (ip string, port int) {
@@ -48,7 +48,7 @@ func GetLocalAddress(stunAddress string) (ip string, port int) {
 	return ip, port
 }
 
-func (c *Client) Connect(address, token string, conn net.PacketConn) error {
+func (c *StunClient) Connect(address, token string, conn net.PacketConn) error {
 	//address stun:stun.l.google.com:19302
 	// 1. 创建指向公共 STUN 服务器的 UDP 连接 (这里以谷歌公共服务器为例)
 	uri, err := stun.ParseURI(address)
@@ -105,11 +105,11 @@ func (c *Client) Connect(address, token string, conn net.PacketConn) error {
 	}
 }
 
-func (c *Client) OnClosing() bool {
+func (c *StunClient) OnClosing() bool {
 	slog.Debug("正在断开stun连接...")
 	return true
 }
 
-func (c *Client) OnClosed() {
+func (c *StunClient) OnClosed() {
 	slog.Debug("stun已经断开！")
 }

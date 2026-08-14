@@ -1,22 +1,22 @@
-package stunhelper
+package ice
 
 import (
 	"log/slog"
 	"net"
 )
 
-type StunClient struct {
+type IceWorker struct {
 	Stun    []string
 	NetConn net.PacketConn
 }
 
 // DetectStun 探测stun服务获取公网ip和端口
-func (sc *StunClient) DetectStun(token string) (ip string, port int) {
-	if len(sc.Stun) > 0 {
-		for i, s := range sc.Stun {
+func (iw *IceWorker) DetectStun(token string) (ip string, port int) {
+	if len(iw.Stun) > 0 {
+		for i, s := range iw.Stun {
 			slog.Debug("配置了stun服务，正在准备探测！", slog.Int("序号", i), slog.String("address", s))
-			cli := NewClient()
-			err := cli.Connect(s, token, sc.NetConn)
+			cli := NewStunClient()
+			err := cli.Connect(s, token, iw.NetConn)
 			if err == nil {
 				if len(ip) > 0 && ip != cli.ExternalAddress.IP.String() {
 					slog.Warn("你的公网 IP 地址发生变化 :", slog.String("ip", ip), slog.String("newip", cli.ExternalAddress.IP.String()))

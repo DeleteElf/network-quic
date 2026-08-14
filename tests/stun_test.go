@@ -2,14 +2,14 @@ package tests
 
 import (
 	"github.com/DeleteElf/zero-net/framework/utils"
-	"github.com/DeleteElf/zero-net/stunhelper"
+	"github.com/DeleteElf/zero-net/ice"
 	"log/slog"
 	"testing"
 )
 
 func TestStunClient(t *testing.T) {
 	utils.InitLog(slog.LevelDebug, nil)
-	client := stunhelper.NewClient()
+	client := ice.NewStunClient()
 	//err := client.Connect("stun:192.168.199.22:3478", "test")
 	//err := client.Connect("stun:121.41.228.111:3478", "test")
 	err := client.Connect("stun:stun.new0.com.cn:3478", "test", nil)

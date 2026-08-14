@@ -5,7 +5,7 @@ import (
 	"github.com/DeleteElf/zero-net/framework"
 	"github.com/DeleteElf/zero-net/framework/network"
 	"github.com/DeleteElf/zero-net/framework/utils"
-	"github.com/DeleteElf/zero-net/stunhelper"
+	"github.com/DeleteElf/zero-net/ice"
 	"github.com/quic-go/quic-go"
 	"log/slog"
 	"net"
@@ -38,7 +38,7 @@ type Server struct {
 
 	OnAcceptSocket       network.SocketCallbackFunc
 	OnSocketDisConnected network.SocketCallbackFunc
-	stunhelper.StunClient
+	ice.IceWorker
 	framework.CloseableObject
 }
 

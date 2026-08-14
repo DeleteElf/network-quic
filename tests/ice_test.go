@@ -8,8 +8,8 @@ import (
 	"github.com/DeleteElf/zero-net/client"
 	"github.com/DeleteElf/zero-net/framework/network"
 	"github.com/DeleteElf/zero-net/framework/utils"
+	"github.com/DeleteElf/zero-net/ice"
 	"github.com/DeleteElf/zero-net/server"
-	"github.com/DeleteElf/zero-net/stunhelper"
 	"github.com/DeleteElf/zero-net/websocket"
 	"github.com/deleteelf/goframework/utils/jsonhelper"
 	"io"
@@ -92,7 +92,7 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 	}
 	serverAddress := cli.ServerAddress
 	if len(cli.Stun) > 0 { //如果配置了stun服务器
-		localIp, _ := stunhelper.GetLocalAddress(cli.Stun[0])
+		localIp, _ := ice.GetLocalAddress(cli.Stun[0])
 		remoteAddress, port := cli.DetectStun(stunKey)
 
 		slog.Info("客户端 STUN 解析结果", slog.String("remoteAddress", remoteAddress), slog.Int("port", port))

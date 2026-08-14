@@ -1,4 +1,4 @@
-package stunhelper
+package ice
 
 import (
 	"github.com/pion/stun/v3"
