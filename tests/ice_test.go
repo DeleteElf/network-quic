@@ -75,7 +75,7 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 		cli.PunchHole(netAddr, cli.SessionId, time.Second, stopChannel)
 		body, err := network.HttpRequest("https://36.249.161.74:3005/ice_state?device_id=0A76DE8C-1AB1-35C3-A137-FC9E10B1EF9F",
 			http.MethodGet, token, nil)
-		close(stopChannel)
+		//close(stopChannel)
 		if err != nil {
 			slog.Error("读取http应答的body出错！", slog.Any("err", err))
 			return err

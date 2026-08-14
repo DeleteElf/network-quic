@@ -4,7 +4,6 @@ import (
 	"github.com/quic-go/quic-go"
 	"log/slog"
 	"net"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -65,18 +64,18 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 		slog.Warn("请先构建打洞成功的通道！")
 		return nil
 	}
-	slog.Info("客户端：开始异步向服务端盲发 UDP 包冲刷 NAT 洞口...", slog.String("target", targetAddr.String()))
+	slog.Info("服务端：开始异步向客户端盲发 UDP 包冲刷 NAT 洞口...", slog.String("target", targetAddr.String()))
 	go func() {
-		pingMsg := []byte(message)
-		for i := 0; i < 1; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
-			_, _ = iw.NetConn.WriteTo(pingMsg, targetAddr)
-			time.Sleep(20 * time.Millisecond)
-		}
-		slog.Debug("客户端：NAT 出口冲刷完成！")
+		//for i := 0; i < 1; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
+		_, _ = iw.NetConn.WriteTo([]byte(message), targetAddr)
+		time.Sleep(20 * time.Millisecond)
+		//}
+		slog.Debug("服务端：NAT 出口首次冲刷完成！")
 	}()
 	go func() {
 		conn := iw.NetConn
 		buf := make([]byte, 1024)
+		isFirst := true
 		//quicConn := iw.QuicConn
 		for {
 			//if quicConn != nil { //因为没有实际连接，实际上我们不用处理这个逻辑
@@ -101,27 +100,36 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 			if err != nil {
 				slog.Debug("客户端打洞超时/失败: %w", err)
 			}
+			if isFirst {
+				go func() { //再连续发10次
+					for i := 0; i < 10; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
+						_, _ = iw.NetConn.WriteTo([]byte(message), targetAddr)
+						time.Sleep(20 * time.Millisecond)
+					}
+				}()
+				isFirst = false
+			}
 			if n == 0 && iw.IsInQuic { //如果在quic模式下，因为只能收到空字符串，我们这边简化一下
-				iw.IceChannel <- IceObject{
-					SessionId: message,
-					State:     Connected,
-				}
+				//iw.IceChannel <- IceObject{
+				//	SessionId: message,
+				//	State:     Connected,
+				//}
 				return
 			} else {
 				recvStr := string(buf[:n])
 				if addr != nil {
 					slog.Debug("客户端收到打洞回包", slog.String("from", addr.String()), slog.String("data", recvStr))
 					ips := strings.Split(addr.String(), ":")
-					port, _ := strconv.Atoi(ips[1])
+					//port, _ := strconv.Atoi(ips[1])
 					// 匹配来自服务端明确的冰打洞包
 					if recvStr == message && len(ips) == 2 { //为了防止污染数据，我们需要校验一下消息内容
-						iw.IceChannel <- IceObject{
-							SessionId: message,
-							Ip:        ips[0],
-							Port:      port,
-							State:     Connected,
-						}
-						return
+						//iw.IceChannel <- IceObject{
+						//	SessionId: message,
+						//	Ip:        ips[0],
+						//	Port:      port,
+						//	State:     Connected,
+						//}
+						//return
 					}
 				}
 			}
