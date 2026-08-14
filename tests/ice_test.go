@@ -28,7 +28,7 @@ func PunchHoleAsync(conn net.PacketConn, targetAddr net.Addr) error {
 		pingMsg := []byte("{\"action\":\"ping\",\"from\":\"ice-certification\"}")
 		udpConn := conn.(*net.UDPConn)
 		// 密集发送 20 个 UDP 包（持续 600ms），把客户端 NAT 防火墙对服务端的出口映射彻底打开
-		for i := 0; i < 1000; i++ {
+		for i := 0; i < 10; i++ {
 			_, _ = udpConn.WriteToUDP(pingMsg, targetAddr.(*net.UDPAddr))
 			time.Sleep(20 * time.Millisecond)
 		}
@@ -104,7 +104,7 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 		strs := strings.Split(cli.NetConn.LocalAddr().String(), ":")
 		data := jsonhelper.JsonObject{}
 		data["type"] = "offer"
-		data["sdp"] = "candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localIp + " rport " + strs[len(strs)-1]
+		data["sdp"] = "a=candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localIp + " rport " + strs[len(strs)-1]
 		jsonData, err := jsonhelper.ToJsonString(data)
 		if err != nil {
 			slog.Error("转成json过程出错！", slog.Any("err", err))
@@ -150,14 +150,14 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 		return err
 	}
 	if len(cli.Stun) > 0 {
-		err = PunchHole(cli.NetConn, netAddr, 20*time.Second)
+		err = PunchHole(cli.NetConn, netAddr, time.Second)
 		if err != nil {
 			slog.Error("UDP 打洞失败，放弃 QUIC 连接", slog.Any("err", err))
 			return err
 		}
 	}
-	//return cli.ConnectToNet(channelCount, cli.NetConn, netAddr, onDisconnect)
-	return nil
+	return cli.ConnectToNet(channelCount, cli.NetConn, netAddr, onDisconnect)
+	//return nil
 }
 
 func TestIceClient(t *testing.T) {
@@ -233,7 +233,7 @@ func TestIceServer(t *testing.T) {
 				localAddress, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, ws.Conn.LocalAddr().String())
 				if err == nil {
 					sdpBody["type"] = "answer"
-					sdpBody["sdp"] = "candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localAddress.IP.String() + " rport 10001"
+					sdpBody["sdp"] = "a=candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localAddress.IP.String() + " rport 10001"
 					result["data"] = sdpBody
 					re, e := jsonhelper.ToJsonString(result)
 					if e == nil {
@@ -295,7 +295,7 @@ func TestIceServer(t *testing.T) {
 			if testServer.IsClosed {
 				break
 			}
-			_, _, err := udpConn.ReadFromUDP(buf)
+			count, _, err := udpConn.ReadFromUDP(buf)
 			if testServer.IsClosed {
 				break
 			}
@@ -307,7 +307,7 @@ func TestIceServer(t *testing.T) {
 				}
 				break
 			}
-			slog.Debug("收到消息===>", slog.String("msg", string(buf)))
+			slog.Debug("收到消息===>", slog.String("msg", string(buf[:count])))
 		}
 		if !restart {
 			break
