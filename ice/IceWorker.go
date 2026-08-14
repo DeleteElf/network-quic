@@ -1,6 +1,7 @@
 package ice
 
 import (
+	"github.com/quic-go/quic-go"
 	"log/slog"
 	"net"
 	"strconv"
@@ -28,6 +29,8 @@ type IceWorker struct {
 	Stun       []string
 	NetConn    net.PacketConn
 	IceChannel chan IceObject
+	QuicConn   *quic.Conn
+	IsInQuic   bool
 }
 
 // DetectStun 探测stun服务获取公网ip和端口
@@ -74,25 +77,52 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 	go func() {
 		conn := iw.NetConn
 		buf := make([]byte, 1024)
+		//quicConn := iw.QuicConn
 		for {
+			//if quicConn != nil { //因为没有实际连接，实际上我们不用处理这个逻辑
+			//	data, err := quicConn.ReceiveDatagram(context.Background())
+			//	if err != nil {
+			//		slog.Debug("客户端打洞超时/失败: %w", err)
+			//	}
+			//	recvStr := string(data)
+			//	ips := strings.Split(quicConn.RemoteAddr().String(), ":")
+			//	port, _ := strconv.Atoi(ips[1])
+			//	if recvStr == message && len(ips) == 2 { //为了防止污染数据，我们需要校验一下消息内容
+			//		iw.IceChannel <- IceObject{
+			//			SessionId: message,
+			//			Ip:        quicConn.RemoteAddr().String(),
+			//			Port:      port,
+			//			State:     Connected,
+			//		}
+			//		return
+			//	}
+			//} else {
 			n, addr, err := conn.ReadFrom(buf)
 			if err != nil {
 				slog.Debug("客户端打洞超时/失败: %w", err)
 			}
-			recvStr := string(buf[:n])
-			if addr != nil {
-				slog.Debug("客户端收到打洞回包", slog.String("from", addr.String()), slog.String("data", recvStr))
-				ips := strings.Split(addr.String(), ":")
-				port, _ := strconv.Atoi(ips[1])
-				// 匹配来自服务端明确的冰打洞包
-				if recvStr == message && len(ips) == 2 { //为了防止污染数据，我们需要校验一下消息内容
-					iw.IceChannel <- IceObject{
-						SessionId: message,
-						Ip:        ips[0],
-						Port:      port,
-						State:     Connected,
+			if n == 0 && iw.IsInQuic { //如果在quic模式下，因为只能收到空字符串，我们这边简化一下
+				iw.IceChannel <- IceObject{
+					SessionId: message,
+					State:     Connected,
+				}
+				return
+			} else {
+				recvStr := string(buf[:n])
+				if addr != nil {
+					slog.Debug("客户端收到打洞回包", slog.String("from", addr.String()), slog.String("data", recvStr))
+					ips := strings.Split(addr.String(), ":")
+					port, _ := strconv.Atoi(ips[1])
+					// 匹配来自服务端明确的冰打洞包
+					if recvStr == message && len(ips) == 2 { //为了防止污染数据，我们需要校验一下消息内容
+						iw.IceChannel <- IceObject{
+							SessionId: message,
+							Ip:        ips[0],
+							Port:      port,
+							State:     Connected,
+						}
+						return
 					}
-					return
 				}
 			}
 		}

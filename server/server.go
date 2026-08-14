@@ -23,8 +23,6 @@ type Stream struct {
 }
 
 type Server struct {
-	////stun服务地址
-	//Stun []string
 	//外网地址
 	ExternalIp   string
 	ExternalPort int
@@ -115,6 +113,7 @@ func (s *Server) StartListen(onDisconnect network.SocketCallbackFunc) {
 		return
 	}
 	slog.Info("服务启动监听", slog.Any("addr", s.NetConn.LocalAddr()))
+	s.IsInQuic = true
 	for {
 		if s.IsClosed { //已经关闭则退出
 			break
@@ -122,7 +121,7 @@ func (s *Server) StartListen(onDisconnect network.SocketCallbackFunc) {
 		if s.listener == nil {
 			break
 		}
-		quicConn, err := s.listener.Accept(context.TODO())
+		s.QuicConn, err = s.listener.Accept(context.TODO())
 		//quicConn.ConnectionStats().SmoothedRTT //获取网络状态相关参数
 		if s.IsClosed { //不再接受新的连接
 			break
@@ -131,8 +130,8 @@ func (s *Server) StartListen(onDisconnect network.SocketCallbackFunc) {
 			slog.Warn("接入连接失败", slog.Any("err", err))
 			break
 		}
-		slog.Info("接入一个新的连接", slog.Any("addr", quicConn.RemoteAddr()))
-		go s.acceptConnection(quicConn, onDisconnect)
+		slog.Info("接入一个新的连接", slog.Any("addr", s.QuicConn.RemoteAddr()))
+		go s.acceptConnection(s.QuicConn, onDisconnect)
 	}
 	slog.Info("服务停止监听")
 }
