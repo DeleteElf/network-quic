@@ -105,9 +105,7 @@ func TestIceClient(t *testing.T) {
 		if cli.IsClosed {
 			break
 		} else {
-			time.Sleep(time.Second * 10)
-			_, _ = cli.Socket.Ping(0)
-
+			time.Sleep(time.Second)
 		}
 	}
 }
