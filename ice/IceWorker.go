@@ -99,6 +99,7 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 			n, addr, err := conn.ReadFrom(buf)
 			if err != nil {
 				slog.Debug("服务端打洞超时/失败: %w", err)
+				continue
 			}
 			//if isFirst {
 			//	go func() { //再连续发10次
