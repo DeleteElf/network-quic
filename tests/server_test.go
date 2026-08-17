@@ -37,6 +37,9 @@ func messageHandler(svr *server.Server, sock *network.Socket, channelIndex int) 
 		if sock.IsClosed {
 			break
 		}
+		if sock.StreamChannels[channelIndex] == nil {
+			break
+		}
 		currentBuffer := sock.StreamChannels[channelIndex].Buffer
 		if currentBuffer == nil {
 			break
