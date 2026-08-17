@@ -14,21 +14,36 @@ import (
 	"time"
 )
 
-//type ConnectionState int
-//
-//const (
-//	None ConnectionState = iota
-//	Connecting
-//	Connected
-//	Closing
-//)
+// icePacketConn 将 ice.Conn 适配为 net.PacketConn 接口
+type icePacketConn struct {
+	*ice.Conn
+}
 
-//type IceObject struct {
-//	SessionId string
-//	Ip        string
-//	Port      int
-//	State     ConnectionState
-//}
+// NewICEPacketConn 创建 net.PacketConn 包装器
+func NewICEPacketConn(c *ice.Conn) net.PacketConn {
+	return &icePacketConn{Conn: c}
+}
+
+// ReadFrom 读取数据并返回 ICE 连接的 RemoteAddr
+func (c *icePacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
+	n, err := c.Conn.Read(p)
+	if err != nil {
+		return 0, nil, err
+	}
+	return n, c.Conn.RemoteAddr(), nil
+}
+
+// WriteTo 忽略传入的 addr 参数，直接通过 ICE 连接发送
+func (c *icePacketConn) WriteTo(p []byte, _ net.Addr) (int, error) {
+	return c.Conn.Write(p)
+}
+
+// IceWorkInterface 可关闭对象
+type IceWorkInterface interface {
+	DetectStun(portMin, portMax uint16) (string, error)
+	PunchHole(message string, timeout time.Duration, isServer bool) net.PacketConn
+	ConnectByIce(conn net.PacketConn) bool
+}
 
 type IceWorker struct {
 	Stun    []string
@@ -37,6 +52,7 @@ type IceWorker struct {
 	QuicConn *quic.Conn
 	//IsInQuic   bool
 	Agent *ice.Agent
+	IceWorkInterface
 }
 
 type SignalInfo struct {
@@ -121,7 +137,7 @@ func (iw *IceWorker) DetectStun(portMin, portMax uint16) (offer string, err erro
 }
 
 // PunchHole 【客户端打洞】：持续向服务端发包开洞，并等待服务端的回应
-func (iw *IceWorker) PunchHole(message string, timeout time.Duration, isServer bool) *ice.Conn {
+func (iw *IceWorker) PunchHole(message string, timeout time.Duration, isServer bool) net.PacketConn {
 	if iw.Agent == nil {
 		slog.Warn("请先创建探测stun，再执行打洞！")
 		return nil
@@ -162,5 +178,5 @@ func (iw *IceWorker) PunchHole(message string, timeout time.Duration, isServer b
 	}
 
 	fmt.Println("[ICE] 🎉 打洞成功！UDP 链路已就绪。")
-	return iceConn
+	return NewICEPacketConn(iceConn)
 }

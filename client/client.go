@@ -66,6 +66,16 @@ func (cli *Client) OnClosed() {
 	slog.Debug("客户端已经关闭")
 }
 
+func (cli *Client) ConnectByIce(conn net.PacketConn) {
+	cli.NetConn = conn
+	// 注意：因为使用的是已知打通的 PacketConn，Target Address 可以使用 Dummy 虚拟地址
+	dummyAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}
+	cli.ConnectToNet(3, nil, dummyAddr, func(sock *network.Socket) {
+		slog.Debug("socket已经断开===》！", slog.String("id", sock.Id))
+	})
+
+}
+
 func (cli *Client) Connect(channelCount int, networkType string, onDisconnect network.SocketCallbackFunc) error {
 	if networkType != network.STREAM_NETWORK_UDP {
 		return errors.New("暂时只支持udp连接！")
@@ -88,7 +98,9 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 	if cli.Socket != nil {
 		return errors.New("当前客户端已经连接！")
 	}
-	cli.NetConn = conn
+	if conn != nil {
+		cli.NetConn = conn
+	}
 	cli.netAddr = addr
 
 	tlsConfig := utils.GenTLSConfig()

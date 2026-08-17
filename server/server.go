@@ -86,6 +86,10 @@ func (s *Server) OnClosed() {
 	slog.Debug("服务端已经关闭")
 }
 
+func (s *Server) ConnectByIce(conn net.PacketConn) {
+	s.NetConn = conn
+}
+
 func (s *Server) StartListen(onDisconnect network.SocketCallbackFunc) {
 	tlsConfig := utils.GenTLSConfig()
 	if s.Config == nil {
