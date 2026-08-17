@@ -17,6 +17,8 @@ import (
 	"github.com/DeleteElf/zero-net/websocket"
 	"log/slog"
 	"reflect"
+	"strconv"
+	"strings"
 	"time"
 	"unsafe"
 )
@@ -310,8 +312,11 @@ func ServerCreate(config *C.NetworkData) C.int {
 	serverCtx = server.NewServerByAddress(address) //尝试连接本机服务
 	if jsonObject["stun"] != nil {
 		stun := jsonObject["stun"].(string)
-		serverCtx.Stun = stun
-		serverCtx.DetectStun(jsonObject["token"].(string))
+		serverCtx.Stun = []string{stun}
+		temp := strings.Split(address, ":")
+		p, _ := strconv.Atoi(temp[len(temp)-1])
+		port := uint16(p)
+		serverCtx.DetectStun(port, port)
 	}
 	serverCtx.OnAcceptSocket = func(sock *network.Socket) {
 		socketMap[sock.Id] = sock

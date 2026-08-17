@@ -1,222 +1,158 @@
 package ice
 
 import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"github.com/deleteelf/goframework/utils/jsonhelper"
+	"github.com/pion/ice/v4"
 	"github.com/quic-go/quic-go"
 	"log/slog"
 	"net"
-	"strconv"
 	"strings"
 	"time"
 )
 
-type ConnectionState int
+//type ConnectionState int
+//
+//const (
+//	None ConnectionState = iota
+//	Connecting
+//	Connected
+//	Closing
+//)
 
-const (
-	None ConnectionState = iota
-	Connecting
-	Connected
-	Closing
-)
-
-type IceObject struct {
-	SessionId string
-	Ip        string
-	Port      int
-	State     ConnectionState
-}
+//type IceObject struct {
+//	SessionId string
+//	Ip        string
+//	Port      int
+//	State     ConnectionState
+//}
 
 type IceWorker struct {
-	Stun       []string
-	NetConn    net.PacketConn
-	IceChannel chan IceObject
-	QuicConn   *quic.Conn
-	IsInQuic   bool
+	Stun    []string
+	NetConn net.PacketConn
+	//IceChannel chan IceObject
+	QuicConn *quic.Conn
+	//IsInQuic   bool
+	Agent *ice.Agent
+}
+
+type SignalInfo struct {
+	Ufrag      string   `json:"ufrag"`
+	Pwd        string   `json:"pwd"`
+	Candidates []string `json:"candidates"`
 }
 
 // DetectStun 探测stun服务获取公网ip和端口
-func (iw *IceWorker) DetectStun(token string) (ip string, port int) {
-	if len(iw.Stun) > 0 {
-		for i, s := range iw.Stun {
-			slog.Debug("配置了stun服务，正在准备探测！", slog.Int("序号", i), slog.String("address", s))
-			cli := NewStunClient()
-			err := cli.Connect(s, token, iw.NetConn)
-			if err == nil {
-				if len(ip) > 0 && ip != cli.ExternalAddress.IP.String() {
-					slog.Warn("你的公网 IP 地址发生变化 :", slog.String("ip", ip), slog.String("newip", cli.ExternalAddress.IP.String()))
-				} else if len(ip) == 0 && len(cli.ExternalAddress.IP.String()) > 0 {
-					ip = cli.ExternalAddress.IP.String()
-				}
-				if port > 0 && port != cli.ExternalAddress.Port {
-					slog.Warn("你的公网 IP 端口发生变化 :", slog.Int("port", port), slog.Int("newport", cli.ExternalAddress.Port))
-				} else if port == 0 && cli.ExternalAddress.Port > 0 {
-					port = cli.ExternalAddress.Port
-				}
+func (iw *IceWorker) DetectStun(portMin, portMax uint16) (offer string, err error) {
+	config := &ice.AgentConfig{
+		NetworkTypes: []ice.NetworkType{ice.NetworkTypeUDP4},
+		Urls: func() []*ice.URL {
+			urls := []*ice.URL{}
+			for _, s := range iw.Stun {
+				u, _ := ice.ParseURL(s)
+				urls = append(urls, u)
 			}
-		}
-		slog.Debug("你的公网 IP 地址 :", slog.Any("ip", ip))
-		slog.Debug("你的公网映射端口 : ", slog.Int("port", port))
+			return urls
+		}(),
 	}
-	return ip, port
-}
-
-// PunchHoleAsync 提供服务端打洞的函数
-func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message, okMessage string) error {
-	if iw.IceChannel == nil {
-		slog.Warn("请先构建打洞成功的通道！")
-		return nil
+	if portMin != 0 { //等于0时，不用配置
+		config.PortMin = portMin
 	}
-	slog.Info("服务端：开始异步向客户端盲发 UDP 包冲刷 NAT 洞口...", slog.String("target", targetAddr.String()))
-	go func() {
-		for i := 0; i < 10; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
-			_, _ = iw.NetConn.WriteTo([]byte(message), targetAddr)
-			time.Sleep(20 * time.Millisecond)
-		}
-		slog.Debug("服务端：NAT 出口首次冲刷完成！")
-	}()
-	go func() {
-		conn := iw.NetConn
-		buf := make([]byte, 1024)
-		//isFirst := true
-		//quicConn := iw.QuicConn
-		for {
-			//if quicConn != nil { //因为没有实际连接，实际上我们不用处理这个逻辑
-			//	data, err := quicConn.ReceiveDatagram(context.Background())
-			//	if err != nil {
-			//		slog.Debug("客户端打洞超时/失败: %w", err)
-			//	}
-			//	recvStr := string(data)
-			//	ips := strings.Split(quicConn.RemoteAddr().String(), ":")
-			//	port, _ := strconv.Atoi(ips[1])
-			//	if recvStr == message && len(ips) == 2 { //为了防止污染数据，我们需要校验一下消息内容
-			//		iw.IceChannel <- IceObject{
-			//			SessionId: message,
-			//			Ip:        quicConn.RemoteAddr().String(),
-			//			Port:      port,
-			//			State:     Connected,
-			//		}
-			//		return
-			//	}
-			//} else {
-			n, addr, err := conn.ReadFrom(buf)
-			if err != nil {
-				slog.Debug("服务端打洞超时/失败:", slog.Any("err", err))
-				continue
-			}
-			//if isFirst {
-			//	go func() { //再连续发10次
-			//		for i := 0; i < 10; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
-			//			_, _ = iw.NetConn.WriteTo([]byte(message), targetAddr)
-			//			time.Sleep(20 * time.Millisecond)
-			//		}
-			//	}()
-			//	isFirst = false
-			//}
-			if n == 0 && iw.IsInQuic { //如果在quic模式下，因为只能收到空字符串，我们这边简化一下
-				//iw.IceChannel <- IceObject{
-				//	SessionId: message,
-				//	State:     Connected,
-				//}
-				return
-			} else {
-				recvStr := string(buf[:n])
-				if addr != nil {
-					slog.Debug("服务端收到客户端的打洞包", slog.String("from", addr.String()), slog.String("data", recvStr))
-					ips := strings.Split(addr.String(), ":")
-					port, _ := strconv.Atoi(ips[1])
-					// 匹配来自服务端明确的冰打洞包
-					if recvStr == message && len(ips) == 2 { //为了防止污染数据，我们需要校验一下消息内容
-						if addr.String() != targetAddr.String() {
-							slog.Warn("服务端收到打洞包与客户端提供的ip端口不一致，尝试使用此地址进行打洞发回消息", slog.String("from", addr.String()), slog.String("data", recvStr))
-							//go func() {
-							//	for i := 0; i < 10; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
-							//		_, _ = iw.NetConn.WriteTo([]byte(message), addr)
-							//		time.Sleep(20 * time.Millisecond)
-							//	}
-							//}()
-							//for i := 0; i < 10; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
-							_, _ = iw.NetConn.WriteTo([]byte(message), addr)
-							//time.Sleep(20 * time.Millisecond)
-							//}
-							//return
-						} else {
-							_, _ = iw.NetConn.WriteTo([]byte(message), targetAddr)
-						}
+	if portMax != 0 { //等于0时，不用配置
+		config.PortMax = portMax
+	}
+	// 1. 创建 pion/ice Agent 配置
+	iw.Agent, err = ice.NewAgent(config)
+	if err != nil {
+		panic(err)
+	}
 
-						//iw.IceChannel <- IceObject{
-						//	SessionId: message,
-						//	Ip:        ips[0],
-						//	Port:      port,
-						//	State:     Connected,
-						//}
-						//return
-					} else if recvStr == okMessage {
-						iw.IceChannel <- IceObject{
-							SessionId: message,
-							Ip:        ips[0],
-							Port:      port,
-							State:     Connected,
-						}
-						return
-					}
-				}
-			}
+	// 2. 收集候选地址 (Candidates)
+	candidateChan := make(chan ice.Candidate, 10)
+	err = iw.Agent.OnCandidate(func(c ice.Candidate) {
+		if c != nil {
+			candidateChan <- c
 		}
-	}()
-	return nil
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("[ICE] 正在收集公网/局域网 Candidate...")
+	if err := iw.Agent.GatherCandidates(); err != nil {
+		panic(err)
+	}
+
+	// 等待一小会儿收集候选
+	time.Sleep(2 * time.Second)
+
+	// 获取本地的 uFrag 和 pwd
+	uFrag, pwd, err := iw.Agent.GetLocalUserCredentials()
+	if err != nil {
+		panic(err)
+	}
+
+	// 导出本地信息（准备通过信令发送给对端）
+	localCandidates, err := iw.Agent.GetLocalCandidates()
+	localInfo := SignalInfo{
+		Ufrag:      uFrag,
+		Pwd:        pwd,
+		Candidates: []string{},
+	}
+	for _, c := range localCandidates {
+		localInfo.Candidates = append(localInfo.Candidates, c.Marshal())
+	}
+
+	localJSON, _ := jsonhelper.ToJsonByte(localInfo)
+	localB64 := base64.StdEncoding.EncodeToString(localJSON)
+
+	return localB64, nil
 }
 
 // PunchHole 【客户端打洞】：持续向服务端发包开洞，并等待服务端的回应
-func (iw *IceWorker) PunchHole(targetAddr net.Addr, message string, timeout time.Duration, stopChannel chan struct{}) {
-	slog.Info("客户端：开始与目标服务器进行 UDP 双向打洞...", slog.String("target", targetAddr.String()))
-	conn := iw.NetConn
-	_ = conn.SetReadDeadline(time.Now().Add(timeout))
-	defer conn.SetReadDeadline(time.Time{})
-	// 1. 后台持续给服务端发包，保持客户端 NAT 洞口开启
-	go func() {
-		ticker := time.NewTicker(20 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stopChannel:
-				return
-			case <-ticker.C:
-				_, _ = conn.WriteTo([]byte(message), targetAddr)
-			}
-		}
-	}()
-	buf := make([]byte, 1024)
-	// 2. 阻塞接收服务端的打洞包
-	for {
-		n, addr, err := conn.ReadFrom(buf)
-		_ = conn.SetReadDeadline(time.Now().Add(timeout))
-		if err != nil {
-			close(stopChannel)
-			slog.Info("客户端打洞超时/失败:", slog.Any("err", err))
-			return
-			//continue
-		}
+func (iw *IceWorker) PunchHole(message string, timeout time.Duration, isServer bool) *ice.Conn {
+	if iw.Agent == nil {
+		slog.Warn("请先创建探测stun，再执行打洞！")
+		return nil
+	}
+	remoteB64 := strings.TrimSpace(message)
+	remoteJSON, _ := base64.StdEncoding.DecodeString(remoteB64)
+	var remoteInfo SignalInfo
+	_ = json.Unmarshal(remoteJSON, &remoteInfo)
 
-		recvStr := string(buf[:n])
-		if addr != nil {
-			slog.Debug("客户端收到打洞回包", slog.String("from", addr.String()), slog.String("data", recvStr))
+	// 设置对端凭证与候选地址
+	err := iw.Agent.SetRemoteCredentials(remoteInfo.Ufrag, remoteInfo.Pwd)
+	if err != nil {
+		panic(err)
+	}
 
-			// 匹配来自服务端明确的冰打洞包
-			//if strings.Contains(recvStr, "ice-certification") {
-			if recvStr == message {
-				slog.Info("🎉 UDP 双向打洞成功！洞口已建立，准备发起 QUIC 握手")
-				go func() {
-					for i := 0; i < 100; i++ {
-						_, _ = conn.WriteTo([]byte("告诉服务端打洞成功了！"), addr)
-						time.Sleep(20 * time.Millisecond)
-					}
-					slog.Debug("已经通知服务端打洞成功了")
-				}()
-				close(stopChannel)
-				return
-			}
-		} else {
-			//偶尔会收到addr 为nil的包，初步判断是quic包，待进一步验证
-			slog.Debug("客户端收到打洞回包，无有效地址！", slog.String("data", recvStr))
+	for _, cStr := range remoteInfo.Candidates {
+		c, err := ice.UnmarshalCandidate(cStr)
+		if err == nil {
+			_ = iw.Agent.AddRemoteCandidate(c)
 		}
 	}
+
+	// 4. 开始 ICE 打洞连通性检查
+	fmt.Println("[ICE] 开始连通性检查 / 打洞中...")
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	var iceConn *ice.Conn
+	if isServer {
+		iceConn, err = iw.Agent.Accept(ctx, remoteInfo.Ufrag, remoteInfo.Pwd)
+	} else {
+		iceConn, err = iw.Agent.Dial(ctx, remoteInfo.Ufrag, remoteInfo.Pwd)
+	}
+
+	if err != nil {
+		fmt.Printf("[ICE] 打洞失败: %v\n", err)
+		return nil
+	}
+
+	fmt.Println("[ICE] 🎉 打洞成功！UDP 链路已就绪。")
+	return iceConn
 }

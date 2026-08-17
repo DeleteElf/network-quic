@@ -59,7 +59,7 @@ func NewServer(conn net.PacketConn, isAgent bool) *Server {
 	}
 	svr.NetConn = conn
 	svr.IsClosed = false
-	svr.IceChannel = make(chan ice.IceObject)
+	//svr.IceChannel = make(chan ice.IceObject)
 	svr.SetOnCloseHandler(svr)
 	return svr
 }
@@ -113,7 +113,7 @@ func (s *Server) StartListen(onDisconnect network.SocketCallbackFunc) {
 		return
 	}
 	slog.Info("服务启动监听", slog.Any("addr", s.NetConn.LocalAddr()))
-	s.IsInQuic = true
+	//s.IsInQuic = true
 	for {
 		if s.IsClosed { //已经关闭则退出
 			break
