@@ -105,7 +105,11 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 		}
 	}
 	slog.Debug("正在远程连接", slog.Any("ServerAddress", cli.netAddr))
-	quicConn, err := quic.Dial(context.TODO(), cli.NetConn, cli.netAddr, tlsConfig, cli.Config)
+	tr := &quic.Transport{
+		Conn: cli.NetConn,
+	}
+	quicConn, err := tr.Dial(context.Background(), cli.netAddr, tlsConfig, cli.Config)
+	//quicConn, err := quic.Dial(context.TODO(), cli.NetConn, cli.netAddr, tlsConfig, cli.Config)
 	if err != nil {
 		slog.Info("远程连接失败！", slog.Any("err", err))
 		return err

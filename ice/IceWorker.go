@@ -75,7 +75,7 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 	go func() {
 		conn := iw.NetConn
 		buf := make([]byte, 1024)
-		isFirst := true
+		//isFirst := true
 		//quicConn := iw.QuicConn
 		for {
 			//if quicConn != nil { //因为没有实际连接，实际上我们不用处理这个逻辑
@@ -98,17 +98,17 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 			//} else {
 			n, addr, err := conn.ReadFrom(buf)
 			if err != nil {
-				slog.Debug("客户端打洞超时/失败: %w", err)
+				slog.Debug("服务端打洞超时/失败: %w", err)
 			}
-			if isFirst {
-				go func() { //再连续发10次
-					for i := 0; i < 10; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
-						_, _ = iw.NetConn.WriteTo([]byte(message), targetAddr)
-						time.Sleep(20 * time.Millisecond)
-					}
-				}()
-				isFirst = false
-			}
+			//if isFirst {
+			//	go func() { //再连续发10次
+			//		for i := 0; i < 10; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
+			//			_, _ = iw.NetConn.WriteTo([]byte(message), targetAddr)
+			//			time.Sleep(20 * time.Millisecond)
+			//		}
+			//	}()
+			//	isFirst = false
+			//}
 			if n == 0 && iw.IsInQuic { //如果在quic模式下，因为只能收到空字符串，我们这边简化一下
 				//iw.IceChannel <- IceObject{
 				//	SessionId: message,
@@ -118,11 +118,19 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 			} else {
 				recvStr := string(buf[:n])
 				if addr != nil {
-					slog.Debug("客户端收到打洞回包", slog.String("from", addr.String()), slog.String("data", recvStr))
+					slog.Debug("服务端收到客户端的打洞包", slog.String("from", addr.String()), slog.String("data", recvStr))
 					ips := strings.Split(addr.String(), ":")
 					//port, _ := strconv.Atoi(ips[1])
 					// 匹配来自服务端明确的冰打洞包
 					if recvStr == message && len(ips) == 2 { //为了防止污染数据，我们需要校验一下消息内容
+						if addr.String() != targetAddr.String() {
+							slog.Warn("服务端收到打洞包与客户端提供的ip端口不一致，尝试使用此地址进行打洞发回消息", slog.String("from", addr.String()), slog.String("data", recvStr))
+							for i := 0; i < 10; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
+								_, _ = iw.NetConn.WriteTo([]byte(message), addr)
+								time.Sleep(20 * time.Millisecond)
+							}
+						}
+
 						//iw.IceChannel <- IceObject{
 						//	SessionId: message,
 						//	Ip:        ips[0],
