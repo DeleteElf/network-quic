@@ -18,6 +18,7 @@ func TestIceClient(t *testing.T) {
 	cli := client.NewClient("", "test01") //尝试连接外网本机服务
 	//cli.Stun = []string{"stun:stun.l.google.com:19302", "stun:stun.new0.com.cn:3478"}
 	cli.Stun = []string{"stun:stun.l.google.com:19302"}
+	//cli.Stun = []string{"stun:stun.new0.com.cn:3478"} //客户端和服务端2个不同的stun也测试通过了
 	if len(cli.Stun) > 0 {
 		offer, err := cli.DetectStun(0, 0)
 		data := utils.JsonObject{}
