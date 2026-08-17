@@ -98,7 +98,7 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 			//} else {
 			n, addr, err := conn.ReadFrom(buf)
 			if err != nil {
-				slog.Debug("服务端打洞超时/失败: %w", err)
+				slog.Debug("服务端打洞超时/失败:", slog.Any("err", err))
 				continue
 			}
 			//if isFirst {
@@ -175,7 +175,7 @@ func (iw *IceWorker) PunchHole(targetAddr net.Addr, message string, timeout time
 		n, addr, err := conn.ReadFrom(buf)
 		if err != nil {
 			//close(stopChannel)
-			slog.Info("客户端打洞超时/失败: %w", err)
+			slog.Info("客户端打洞超时/失败:", slog.Any("err", err))
 			continue
 		}
 
