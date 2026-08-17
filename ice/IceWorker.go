@@ -131,6 +131,8 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 							//time.Sleep(20 * time.Millisecond)
 							//}
 							//return
+						} else {
+							_, _ = iw.NetConn.WriteTo([]byte(message), targetAddr)
 						}
 
 						//iw.IceChannel <- IceObject{

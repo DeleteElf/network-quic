@@ -84,6 +84,25 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 	}
 	//return cli.ConnectToNet(channelCount, cli.NetConn, netAddr, onDisconnect)
 	cli.NetConn.WriteTo([]byte("告诉服务端打洞成功了！"), netAddr)
+	slog.Debug("已经通知服务端打洞成功了")
+	buf := make([]byte, 1024)
+	//继续接收服务端的数据包
+	for {
+		n, addr, err := cli.NetConn.ReadFrom(buf)
+		if err != nil {
+			//close(stopChannel)
+			slog.Info("客户端打洞超时/失败: %w", err)
+			continue
+		}
+		recvStr := string(buf[:n])
+		if addr != nil {
+			slog.Debug("客户端收到数据包", slog.String("from", addr.String()), slog.String("data", recvStr))
+
+		} else {
+			//偶尔会收到addr 为nil的包，初步判断是quic包，待进一步验证
+			slog.Debug("客户端收到数据包，无有效地址！", slog.String("data", recvStr))
+		}
+	}
 	return nil
 }
 
