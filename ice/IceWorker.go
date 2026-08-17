@@ -66,7 +66,7 @@ func (iw *IceWorker) DetectStun(portMin, portMax uint16) (offer string, err erro
 		config.PortMax = portMax
 
 		// 显式告知 pion/ice：我的公网 IP 就是这个，不需要 STUN 探测
-		//config.NAT1To1IPs = []string{publicIP}
+		config.NAT1To1IPs = []string{"121.41.228.111"}
 		// 针对 1:1 NAT 环境的 Candidate 类型配置
 		config.NAT1To1IPCandidateType = ice.CandidateTypeHost
 	}
