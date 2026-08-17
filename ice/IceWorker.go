@@ -94,7 +94,7 @@ func (iw *IceWorker) DetectStun(portMin, portMax uint16) (offer string, err erro
 	if err != nil {
 		panic(err)
 	}
-
+	slog.Debug("本地身份和密码", slog.String("ufrag", uFrag), slog.String("pwd", pwd))
 	// 导出本地信息（准备通过信令发送给对端）
 	localCandidates, err := iw.Agent.GetLocalCandidates()
 	localInfo := SignalInfo{
@@ -103,7 +103,9 @@ func (iw *IceWorker) DetectStun(portMin, portMax uint16) (offer string, err erro
 		Candidates: []string{},
 	}
 	for _, c := range localCandidates {
-		localInfo.Candidates = append(localInfo.Candidates, c.Marshal())
+		candidate := c.Marshal()
+		slog.Debug("加入候选", slog.String("地址", candidate))
+		localInfo.Candidates = append(localInfo.Candidates, candidate)
 	}
 
 	localJSON, _ := jsonhelper.ToJsonByte(localInfo)
