@@ -125,10 +125,11 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 					if recvStr == message && len(ips) == 2 { //为了防止污染数据，我们需要校验一下消息内容
 						if addr.String() != targetAddr.String() {
 							slog.Warn("服务端收到打洞包与客户端提供的ip端口不一致，尝试使用此地址进行打洞发回消息", slog.String("from", addr.String()), slog.String("data", recvStr))
-							for i := 0; i < 10; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
-								_, _ = iw.NetConn.WriteTo([]byte(message), addr)
-								time.Sleep(20 * time.Millisecond)
-							}
+							//for i := 0; i < 10; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
+							_, _ = iw.NetConn.WriteTo([]byte(message), addr)
+							//time.Sleep(20 * time.Millisecond)
+							//}
+							//return
 						}
 
 						//iw.IceChannel <- IceObject{
@@ -150,8 +151,8 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 func (iw *IceWorker) PunchHole(targetAddr net.Addr, message string, timeout time.Duration, stopChannel chan struct{}) {
 	slog.Info("客户端：开始与目标服务器进行 UDP 双向打洞...", slog.String("target", targetAddr.String()))
 	conn := iw.NetConn
-	_ = conn.SetReadDeadline(time.Now().Add(timeout))
-	defer conn.SetReadDeadline(time.Time{})
+	//_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	//defer conn.SetReadDeadline(time.Time{})
 	// 1. 后台持续给服务端发包，保持客户端 NAT 洞口开启
 	go func() {
 		ticker := time.NewTicker(20 * time.Millisecond)
@@ -165,22 +166,30 @@ func (iw *IceWorker) PunchHole(targetAddr net.Addr, message string, timeout time
 			}
 		}
 	}()
-	//// 2. 阻塞接收服务端的打洞包
-	//for {
-	//	n, addr, err := conn.ReadFrom(buf)
-	//	if err != nil {
-	//		close(stopChan)
-	//		return fmt.Errorf("客户端打洞超时/失败: %w", err)
-	//	}
-	//
-	//	recvStr := string(buf[:n])
-	//	slog.Debug("客户端收到打洞回包", slog.String("from", addr.String()), slog.String("data", recvStr))
-	//
-	//	// 匹配来自服务端明确的冰打洞包
-	//	if strings.Contains(recvStr, "ice-certification") {
-	//		slog.Info("🎉 UDP 双向打洞成功！洞口已建立，准备发起 QUIC 握手")
-	//		close(stopChan)
-	//		return nil
-	//	}
-	//}
+	buf := make([]byte, 1024)
+	// 2. 阻塞接收服务端的打洞包
+	for {
+		n, addr, err := conn.ReadFrom(buf)
+		if err != nil {
+			//close(stopChannel)
+			slog.Info("客户端打洞超时/失败: %w", err)
+			continue
+		}
+
+		recvStr := string(buf[:n])
+		if addr != nil {
+			slog.Debug("客户端收到打洞回包", slog.String("from", addr.String()), slog.String("data", recvStr))
+
+			// 匹配来自服务端明确的冰打洞包
+			//if strings.Contains(recvStr, "ice-certification") {
+			if recvStr == message {
+				slog.Info("🎉 UDP 双向打洞成功！洞口已建立，准备发起 QUIC 握手")
+				close(stopChannel)
+				return
+			}
+		} else {
+			//偶尔会收到addr 为nil的包，初步判断是quic包，待进一步验证
+			slog.Debug("客户端收到打洞回包，无有效地址！", slog.String("data", recvStr))
+		}
+	}
 }

@@ -73,17 +73,17 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 	if len(cli.Stun) > 0 {
 		stopChannel := make(chan struct{})
 		cli.PunchHole(netAddr, cli.SessionId, 20*time.Second, stopChannel)
-		body, err := network.HttpRequest("https://36.249.161.74:3005/ice_state?device_id=0A76DE8C-1AB1-35C3-A137-FC9E10B1EF9F",
-			http.MethodGet, token, nil)
-		//close(stopChannel)
-		if err != nil {
-			slog.Error("读取http应答的body出错！", slog.Any("err", err))
-			return err
-		}
-		slog.Debug("打洞成功！", slog.String("body", string(body)))
+		//body, err := network.HttpRequest("https://36.249.161.74:3005/ice_state?device_id=0A76DE8C-1AB1-35C3-A137-FC9E10B1EF9F",
+		//	http.MethodGet, token, nil)
+		////close(stopChannel)
+		//if err != nil {
+		//	slog.Error("读取http应答的body出错！", slog.Any("err", err))
+		//	return err
+		//}
+		//slog.Debug("打洞成功！", slog.String("body", string(body)))
 	}
 	//return cli.ConnectToNet(channelCount, cli.NetConn, netAddr, onDisconnect)
-	//cli.NetConn.WriteTo("发送打洞消息给服务端",)
+	cli.NetConn.WriteTo([]byte("告诉服务端打洞成功了！"), netAddr)
 	return nil
 }
 
