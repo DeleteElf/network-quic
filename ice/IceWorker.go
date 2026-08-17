@@ -52,6 +52,7 @@ func (iw *IceWorker) DetectStun(portMin, portMax uint16) (offer string, err erro
 		Urls: func() []*ice.URL {
 			urls := []*ice.URL{}
 			for _, s := range iw.Stun {
+				slog.Debug("加入stun地址", slog.String("url", s))
 				u, _ := ice.ParseURL(s)
 				urls = append(urls, u)
 			}
