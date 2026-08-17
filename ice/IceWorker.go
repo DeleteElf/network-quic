@@ -4,6 +4,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -59,7 +60,7 @@ func (iw *IceWorker) DetectStun(token string) (ip string, port int) {
 }
 
 // PunchHoleAsync 提供服务端打洞的函数
-func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
+func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message, okMessage string) error {
 	if iw.IceChannel == nil {
 		slog.Warn("请先构建打洞成功的通道！")
 		return nil
@@ -121,11 +122,17 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 				if addr != nil {
 					slog.Debug("服务端收到客户端的打洞包", slog.String("from", addr.String()), slog.String("data", recvStr))
 					ips := strings.Split(addr.String(), ":")
-					//port, _ := strconv.Atoi(ips[1])
+					port, _ := strconv.Atoi(ips[1])
 					// 匹配来自服务端明确的冰打洞包
 					if recvStr == message && len(ips) == 2 { //为了防止污染数据，我们需要校验一下消息内容
 						if addr.String() != targetAddr.String() {
 							slog.Warn("服务端收到打洞包与客户端提供的ip端口不一致，尝试使用此地址进行打洞发回消息", slog.String("from", addr.String()), slog.String("data", recvStr))
+							//go func() {
+							//	for i := 0; i < 10; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
+							//		_, _ = iw.NetConn.WriteTo([]byte(message), addr)
+							//		time.Sleep(20 * time.Millisecond)
+							//	}
+							//}()
 							//for i := 0; i < 10; i++ { //网上说打动需要多次冲刷，但实际测试就1次就可以了
 							_, _ = iw.NetConn.WriteTo([]byte(message), addr)
 							//time.Sleep(20 * time.Millisecond)
@@ -142,6 +149,14 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 						//	State:     Connected,
 						//}
 						//return
+					} else if recvStr == okMessage {
+						iw.IceChannel <- IceObject{
+							SessionId: message,
+							Ip:        ips[0],
+							Port:      port,
+							State:     Connected,
+						}
+						return
 					}
 				}
 			}
@@ -154,8 +169,8 @@ func (iw *IceWorker) PunchHoleAsync(targetAddr net.Addr, message string) error {
 func (iw *IceWorker) PunchHole(targetAddr net.Addr, message string, timeout time.Duration, stopChannel chan struct{}) {
 	slog.Info("客户端：开始与目标服务器进行 UDP 双向打洞...", slog.String("target", targetAddr.String()))
 	conn := iw.NetConn
-	//_ = conn.SetReadDeadline(time.Now().Add(timeout))
-	//defer conn.SetReadDeadline(time.Time{})
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	defer conn.SetReadDeadline(time.Time{})
 	// 1. 后台持续给服务端发包，保持客户端 NAT 洞口开启
 	go func() {
 		ticker := time.NewTicker(20 * time.Millisecond)
@@ -173,9 +188,11 @@ func (iw *IceWorker) PunchHole(targetAddr net.Addr, message string, timeout time
 	// 2. 阻塞接收服务端的打洞包
 	for {
 		n, addr, err := conn.ReadFrom(buf)
+		_ = conn.SetReadDeadline(time.Now().Add(timeout))
 		if err != nil {
 			//close(stopChannel)
-			slog.Info("客户端打洞超时/失败:", slog.Any("err", err))
+			//slog.Info("客户端打洞超时/失败:", slog.Any("err", err))
+			//return
 			continue
 		}
 

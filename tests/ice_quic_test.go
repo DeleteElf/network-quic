@@ -208,7 +208,7 @@ func TestIceQuicServer(t *testing.T) {
 									go func() {
 										clientAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, addr)
 										if err == nil {
-											_ = testServer.PunchHoleAsync(clientAddr, sessionId)
+											_ = testServer.PunchHoleAsync(clientAddr, sessionId, "告诉服务端打洞成功了！")
 										}
 									}()
 								}

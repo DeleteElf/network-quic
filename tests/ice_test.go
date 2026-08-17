@@ -57,9 +57,12 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 
 		if result["data"] != nil {
 			sdpData := result["data"].(map[string]interface{})
-			sdpDatas := strings.Split(sdpData["sdp"].(string), " ")
-
-			serverAddress = net.JoinHostPort(sdpDatas[4], sdpDatas[5])
+			if sdpData["sdp"] != nil {
+				sdpDatas := strings.Split(sdpData["sdp"].(string), " ")
+				serverAddress = net.JoinHostPort(sdpDatas[4], sdpDatas[5])
+			} else {
+				return nil
+			}
 		}
 		if result["session_id"] != nil {
 			cli.SessionId = result["session_id"].(string)
@@ -83,15 +86,21 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 		//slog.Debug("打洞成功！", slog.String("body", string(body)))
 	}
 	//return cli.ConnectToNet(channelCount, cli.NetConn, netAddr, onDisconnect)
-	cli.NetConn.WriteTo([]byte("告诉服务端打洞成功了！"), netAddr)
-	slog.Debug("已经通知服务端打洞成功了")
+	go func() {
+		for i := 0; i < 10; i++ {
+			_, _ = cli.NetConn.WriteTo([]byte("告诉服务端打洞成功了！"), netAddr)
+			time.Sleep(20 * time.Millisecond)
+		}
+		slog.Debug("已经通知服务端打洞成功了")
+	}()
+
 	buf := make([]byte, 1024)
 	//继续接收服务端的数据包
 	for {
 		n, addr, err := cli.NetConn.ReadFrom(buf)
 		if err != nil {
 			//close(stopChannel)
-			slog.Info("客户端打洞超时/失败:", slog.Any("err", err))
+			slog.Info("客户端接收数据发生错误:", slog.Any("err", err))
 			continue
 		}
 		recvStr := string(buf[:n])
@@ -220,7 +229,7 @@ func TestIceServer(t *testing.T) {
 									go func() {
 										clientAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, addr)
 										if err == nil {
-											_ = testServer.PunchHoleAsync(clientAddr, sessionId)
+											_ = testServer.PunchHoleAsync(clientAddr, sessionId, "告诉服务端打洞成功了！")
 										}
 									}()
 								}
