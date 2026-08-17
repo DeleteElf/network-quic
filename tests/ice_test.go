@@ -35,36 +35,12 @@ func TestIceClient(t *testing.T) {
 			answer := result["data"].(map[string]interface{})
 			if answer["sdp"] != nil {
 				cli.PunchHole(answer["sdp"].(string), 30*time.Second, false)
-				//sdpDatas := strings.Split(sdpData["sdp"].(string), " ")
-				//serverAddress = net.JoinHostPort(sdpDatas[4], sdpDatas[5])
-
 			}
 		}
-
-		//result, err := utils.GetJsonObject(body)
-		//
-		//if result["data"] != nil {
-		//	answer := result["data"].(map[string]interface{})
-		//	if answer["sdp"] != nil {
-		//
-		//		//sdpDatas := strings.Split(sdpData["sdp"].(string), " ")
-		//		//serverAddress = net.JoinHostPort(sdpDatas[4], sdpDatas[5])
-		//
-		//	}
-		//}
-		//if result["session_id"] != nil {
-		//	cli.SessionId = result["session_id"].(string)
-		//}
+	} else {
+		//todo:这里使用普通连接
 	}
-	//
-	//err := ConnectByStun(cli, "0DBDB1AE-CABD-F2BA-4F89-132A39EC90D1", "test", 3, func(sock *network.Socket) {
-	//	slog.Debug("socket已经断开===》！", slog.String("clientId", sock.Id))
-	//}) //创建udp网络
-	//
-	//if err != nil {
-	//	return
-	//}
-	//time.Sleep(time.Second * 3) //等待3秒，等他们通讯完成再退出
+
 	for {
 		if cli.IsClosed {
 			break
@@ -99,50 +75,7 @@ func TestIceServer(t *testing.T) {
 		localInfo = utils.JsonObject{}
 		localInfo["type"] = "answer"
 		localInfo["sdp"] = answer //"a=candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localIp + " rport " + strs[len(strs)-1]
-		//jsonData, _ = utils.ToJsonString(data)
-		//body, err := network.HttpRequest("https://36.249.161.74:3005/ice?device_id=0A76DE8C-1AB1-35C3-A137-FC9E10B1EF9F",
-		//	http.MethodPost, "0DBDB1AE-CABD-F2BA-4F89-132A39EC90D1", bytes.NewBufferString(jsonData))
-		//if err != nil {
-		//	slog.Error("读取http应答的body出错！", slog.Any("err", err))
-		//}
-		//slog.Info("收到http应答：", slog.String("body", string(body)))
-		//result, err := utils.GetJsonObject(body)
-		//if result["data"] != nil {
-		//	answer := result["data"].(map[string]interface{})
-		//	if answer["sdp"] != nil {
-		//		cli.PunchHole(answer["sdp"].(string), 30*time.Second, false)
-		//		//sdpDatas := strings.Split(sdpData["sdp"].(string), " ")
-		//		//serverAddress = net.JoinHostPort(sdpDatas[4], sdpDatas[5])
-		//
-		//	}
-		//}
-
-		//result, err := utils.GetJsonObject(body)
-		//
-		//if result["data"] != nil {
-		//	answer := result["data"].(map[string]interface{})
-		//	if answer["sdp"] != nil {
-		//
-		//		//sdpDatas := strings.Split(sdpData["sdp"].(string), " ")
-		//		//serverAddress = net.JoinHostPort(sdpDatas[4], sdpDatas[5])
-		//
-		//	}
-		//}
-		//if result["session_id"] != nil {
-		//	cli.SessionId = result["session_id"].(string)
-		//}
 	}
-
-	//testServer.Stun = "stun:stun.new0.com.cn:3478"
-	// ⚠️ 【关键修正】：确保 testServer.NetConn 不为 nil 后再调用 DetectStun
-	//if testServer.NetConn == nil {
-	//	addr, _ := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, "0.0.0.0:10001")
-	//	conn, _ := net.ListenUDP(network.STREAM_NETWORK_UDP, addr)
-	//	testServer.NetConn = conn
-	//}
-	//
-	//remoteAddress, port := testServer.DetectStun()
-	//slog.Info("服务端 STUN 解析结果", slog.String("remoteAddress", remoteAddress), slog.Int("port", port))
 
 	ws.OnMessage = func(msg string) {
 		data, err := utils.GetJsonObject([]byte(msg))
@@ -192,35 +125,7 @@ func TestIceServer(t *testing.T) {
 						slog.Debug("发送本机信令数据给客户端", slog.String("data", re))
 						_ = ws.Send(re)
 					}
-
-					//localAddress, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, ws.Conn.LocalAddr().String())
-					//if err == nil {
-					//	sdpBody["type"] = "answer"
-					//	sdpBody["sdp"] = "a=candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localAddress.IP.String() + " rport 10001"
-					//	result["data"] = sdpBody
-					//	re, e := utils.ToJsonString(result)
-					//	if len(jsonData) > 0 {
-					//		slog.Debug("发送本机信令数据给客户端", slog.String("data", jsonData))
-					//		_ = ws.Send(jsonData)
-					//	}
-					//
-					//	if body["sdp"] != nil {
-					//		datas := strings.Split(body["sdp"].(string), " ")
-					//		if len(datas) >= 6 {
-					//			addr := net.JoinHostPort(datas[4], datas[5])
-					//			slog.Debug("收到请求探测新的地址", slog.String("addr", addr))
-					//			if len(addr) > 10 {
-					//				go func() {
-					//					clientAddr, err := net.ResolveUDPAddr(network.STREAM_NETWORK_UDP, addr)
-					//					if err == nil {
-					//						_ = testServer.PunchHoleAsync(clientAddr, sessionId, "告诉服务端打洞成功了！")
-					//					}
-					//				}()
-					//			}
-					//			//iceMessage <- addr
-					//		}
-					//	}
-					//}
+					testServer.PunchHole(body["sdp"].(string), 30*time.Second, true)
 				}
 				break
 			default:
