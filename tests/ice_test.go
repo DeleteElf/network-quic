@@ -72,7 +72,7 @@ func TestIceServer(t *testing.T) {
 	testServer.Stun = []string{"stun:stun.l.google.com:19302"}
 	var localInfo utils.JsonObject
 	if len(testServer.Stun) > 0 {
-		answer, _ := testServer.DetectStun(10000, 10005)
+		answer, _ := testServer.DetectStun(10000, 10001) //阿里云极限测试
 		localInfo = utils.JsonObject{}
 		localInfo["type"] = "answer"
 		localInfo["sdp"] = answer //"a=candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localIp + " rport " + strs[len(strs)-1]
