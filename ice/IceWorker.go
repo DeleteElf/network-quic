@@ -75,17 +75,18 @@ func (iw *IceWorker) DetectStun(portMin, portMax uint16) (offer string, err erro
 			return urls
 		}(),
 	}
-	if portMin != 0 { //等于0时，不用配置
+	if portMin != 0 && portMax != 0 { //等于0时，不用配置
 		config.PortMin = portMin
-	}
-	if portMax != 0 { //等于0时，不用配置
 		config.PortMax = portMax
-
-		// 显式告知 pion/ice：我的公网 IP 就是这个，不需要 STUN 探测
-		config.NAT1To1IPs = []string{"121.41.228.111"}
-		// 针对 1:1 NAT 环境的 Candidate 类型配置
-		config.NAT1To1IPCandidateType = ice.CandidateTypeHost
+		//// 显式告知 pion/ice：我的公网 IP 就是这个，不需要 STUN 探测
+		//config.NAT1To1IPs = []string{"121.41.228.111"}
+		//// 针对 1:1 NAT 环境的 Candidate 类型配置
+		//config.NAT1To1IPCandidateType = ice.CandidateTypeHost
+		if portMax-portMin < 5 {
+			slog.Warn("当端口范围太小时，会导致无法探测公网地址，建议范围不小于5！")
+		}
 	}
+
 	// 1. 创建 pion/ice Agent 配置
 	iw.Agent, err = ice.NewAgent(config)
 	if err != nil {
