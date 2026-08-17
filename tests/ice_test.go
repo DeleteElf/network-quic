@@ -91,7 +91,7 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 		n, addr, err := cli.NetConn.ReadFrom(buf)
 		if err != nil {
 			//close(stopChannel)
-			slog.Info("客户端打洞超时/失败: %w", err)
+			slog.Info("客户端打洞超时/失败:", slog.Any("err", err))
 			continue
 		}
 		recvStr := string(buf[:n])
