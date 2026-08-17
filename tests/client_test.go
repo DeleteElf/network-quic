@@ -43,8 +43,8 @@ func receiveHandler(cli *client.Client, channelIndex int) {
 }
 
 func TestClient(t *testing.T) {
-	utils.InitLog(slog.LevelDebug, nil)                  //初始化日志
-	cli := client.NewClient("127.0.0.1:10001", "test01") //尝试连接本机服务
+	utils.InitLog(slog.LevelDebug, nil)                       //初始化日志
+	cli := client.NewClient("192.168.199.22:10001", "test01") //尝试连接本机服务
 	cli.Config = &quic.Config{
 		//MaxIncomingStreams:      0xffffffffffff,   // 最大默认stream输入，默认100
 		HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
@@ -78,14 +78,6 @@ func TestClient(t *testing.T) {
 
 	_, _ = cli.Socket.Send(1, []byte("hello"))
 	slog.Info("正在向通道1发送数据", slog.String("msg", "hello"))
-
-	go func() {
-		time.Sleep(1 * time.Second)
-		msg0 := "hello,i am channel 0 data from client"
-		slog.Info("正在向通道0发送数据", slog.String("msg", msg0))
-		_, _ = cli.Socket.Send(0, []byte(msg0))
-	}()
-
 	//time.Sleep(time.Second * 3) //等待3秒，等他们通讯完成再退出
 	for {
 		time.Sleep(time.Second * 3)
