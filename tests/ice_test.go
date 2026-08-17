@@ -16,7 +16,8 @@ import (
 func TestIceClient(t *testing.T) {
 	utils.InitLog(slog.LevelDebug, nil)   //初始化日志
 	cli := client.NewClient("", "test01") //尝试连接外网本机服务
-	cli.Stun = []string{"stun:stun.l.google.com:19302", "stun:stun.new0.com.cn:3478"}
+	//cli.Stun = []string{"stun:stun.l.google.com:19302", "stun:stun.new0.com.cn:3478"}
+	cli.Stun = []string{"stun:stun.l.google.com:19302"}
 	if len(cli.Stun) > 0 {
 		offer, err := cli.DetectStun(0, 0)
 		data := utils.JsonObject{}
@@ -90,7 +91,8 @@ func TestIceServer(t *testing.T) {
 
 	// 1. 初始化 Server 实例并确保绑定端口/创建 NetConn
 	testServer = server.NewServer(nil, false) //server.NewServerByAddress("0.0.0.0:10001")
-	testServer.Stun = []string{"stun:stun.l.google.com:19302", "stun:stun.new0.com.cn:3478"}
+	//testServer.Stun = []string{"stun:stun.l.google.com:19302", "stun:stun.new0.com.cn:3478"}
+	testServer.Stun = []string{"stun:stun.l.google.com:19302"}
 	var localInfo utils.JsonObject
 	if len(testServer.Stun) > 0 {
 		answer, _ := testServer.DetectStun(10001, 10001)
