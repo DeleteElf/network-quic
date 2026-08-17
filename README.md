@@ -12,10 +12,12 @@ agent       代理逻辑
 client      客户端逻辑
 exports     导出的api
 framework   架构基础
+ice         pion ice打洞支持
 main        导出的入口
 output      成果输出目录
 server      服务端逻辑
 tests       单元测试
+websocket   websocket协议支持
 
 #### FAQ
 1. 打包出现 go/pkg/tool/linux_amd64/link: running gcc failed: exit status 1
