@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"github.com/deleteelf/goframework/utils/jsonhelper"
 	"github.com/pion/ice/v4"
 	"github.com/quic-go/quic-go"
@@ -104,7 +103,7 @@ func (iw *IceWorker) DetectStun(portMin, portMax uint16) (offer string, err erro
 		panic(err)
 	}
 
-	fmt.Println("[ICE] 正在收集公网/局域网 Candidate...")
+	slog.Debug("[ICE] 正在收集公网/局域网 Candidate...")
 	if err := iw.Agent.GatherCandidates(); err != nil {
 		panic(err)
 	}
@@ -162,7 +161,7 @@ func (iw *IceWorker) PunchHole(message string, timeout time.Duration, isServer b
 	}
 
 	// 4. 开始 ICE 打洞连通性检查
-	fmt.Println("[ICE] 开始连通性检查 / 打洞中...")
+	slog.Debug("[ICE] 开始连通性检查 / 打洞中...")
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -174,10 +173,10 @@ func (iw *IceWorker) PunchHole(message string, timeout time.Duration, isServer b
 	}
 
 	if err != nil {
-		fmt.Printf("[ICE] 打洞失败: %v\n", err)
+		slog.Debug("[ICE] 打洞失败: %v\n", err)
 		return nil
 	}
 
-	fmt.Println("[ICE] 🎉 打洞成功！UDP 链路已就绪。")
+	slog.Debug("[ICE] 🎉 打洞成功！UDP 链路已就绪。")
 	return NewICEPacketConn(iceConn)
 }
