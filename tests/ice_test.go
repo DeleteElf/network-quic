@@ -75,7 +75,7 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 	}
 	if len(cli.Stun) > 0 {
 		stopChannel := make(chan struct{})
-		cli.PunchHole(netAddr, cli.SessionId, 20*time.Second, stopChannel)
+		cli.PunchHole(netAddr, cli.SessionId, 60*time.Second, stopChannel)
 		//body, err := network.HttpRequest("https://36.249.161.74:3005/ice_state?device_id=0A76DE8C-1AB1-35C3-A137-FC9E10B1EF9F",
 		//	http.MethodGet, token, nil)
 		////close(stopChannel)
@@ -85,14 +85,6 @@ func ConnectByStun(cli *client.Client, token, stunKey string, channelCount int, 
 		//}
 		//slog.Debug("打洞成功！", slog.String("body", string(body)))
 	}
-	//return cli.ConnectToNet(channelCount, cli.NetConn, netAddr, onDisconnect)
-	go func() {
-		for i := 0; i < 10; i++ {
-			_, _ = cli.NetConn.WriteTo([]byte("告诉服务端打洞成功了！"), netAddr)
-			time.Sleep(20 * time.Millisecond)
-		}
-		slog.Debug("已经通知服务端打洞成功了")
-	}()
 
 	buf := make([]byte, 1024)
 	//继续接收服务端的数据包

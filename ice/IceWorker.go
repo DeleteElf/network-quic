@@ -190,10 +190,10 @@ func (iw *IceWorker) PunchHole(targetAddr net.Addr, message string, timeout time
 		n, addr, err := conn.ReadFrom(buf)
 		_ = conn.SetReadDeadline(time.Now().Add(timeout))
 		if err != nil {
-			//close(stopChannel)
-			//slog.Info("客户端打洞超时/失败:", slog.Any("err", err))
-			//return
-			continue
+			close(stopChannel)
+			slog.Info("客户端打洞超时/失败:", slog.Any("err", err))
+			return
+			//continue
 		}
 
 		recvStr := string(buf[:n])
@@ -204,6 +204,13 @@ func (iw *IceWorker) PunchHole(targetAddr net.Addr, message string, timeout time
 			//if strings.Contains(recvStr, "ice-certification") {
 			if recvStr == message {
 				slog.Info("🎉 UDP 双向打洞成功！洞口已建立，准备发起 QUIC 握手")
+				go func() {
+					for i := 0; i < 100; i++ {
+						_, _ = conn.WriteTo([]byte("告诉服务端打洞成功了！"), addr)
+						time.Sleep(20 * time.Millisecond)
+					}
+					slog.Debug("已经通知服务端打洞成功了")
+				}()
 				close(stopChannel)
 				return
 			}
