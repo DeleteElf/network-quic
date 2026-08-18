@@ -25,7 +25,10 @@ type Client struct {
 	ServerAddress string
 	netAddr       net.Addr
 
-	Socket *network.Socket
+	NetConn  net.PacketConn
+	QuicConn *quic.Conn
+	Socket   *network.Socket
+
 	Config *quic.Config
 
 	ice.IceWorker

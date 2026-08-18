@@ -30,9 +30,10 @@ type Server struct {
 	isAgent  bool
 	listener *quic.Listener
 	Sockets  map[string]*network.Socket
-
-	Config *quic.Config
-	lock   sync.Mutex
+	NetConn  net.PacketConn
+	QuicConn *quic.Conn
+	Config   *quic.Config
+	lock     sync.Mutex
 
 	OnAcceptSocket       network.SocketCallbackFunc
 	OnSocketDisConnected network.SocketCallbackFunc
@@ -126,7 +127,6 @@ func (s *Server) StartListen(onDisconnect network.SocketCallbackFunc) {
 			break
 		}
 		s.QuicConn, err = s.listener.Accept(context.TODO())
-		//quicConn.ConnectionStats().SmoothedRTT //获取网络状态相关参数
 		if s.IsClosed { //不再接受新的连接
 			break
 		}

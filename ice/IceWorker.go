@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"github.com/deleteelf/goframework/utils/jsonhelper"
 	"github.com/pion/ice/v4"
-	"github.com/quic-go/quic-go"
 	"log/slog"
 	"net"
 	"strings"
@@ -45,11 +44,7 @@ type IceWorkInterface interface {
 }
 
 type IceWorker struct {
-	Stun    []string
-	NetConn net.PacketConn
-	//IceChannel chan IceObject
-	QuicConn *quic.Conn
-	//IsInQuic   bool
+	Stun  []string
 	Agent *ice.Agent
 	IceWorkInterface
 }
