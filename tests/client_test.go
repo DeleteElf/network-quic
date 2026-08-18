@@ -5,6 +5,7 @@ import (
 	"github.com/DeleteElf/zero-net/framework/network"
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/qlog"
 	"log/slog"
 	"testing"
 	"time"
@@ -54,6 +55,7 @@ func TestClient(t *testing.T) {
 		DisablePathMTUDiscovery: false,
 		Allow0RTT:               true,
 		EnableDatagrams:         true,
+		Tracer:                  qlog.DefaultConnectionTracer,
 	}
 	err := cli.Connect(3, network.STREAM_NETWORK_UDP, func(sock *network.Socket) {
 		slog.Debug("socket已经断开===》！", slog.String("clientId", sock.Id))

@@ -9,6 +9,7 @@ import (
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/DeleteElf/zero-net/ice"
 	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/qlog"
 	"log/slog"
 	"net"
 	"time"
@@ -117,6 +118,7 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 			DisablePathMTUDiscovery: false,
 			Allow0RTT:               true,
 			EnableDatagrams:         false,
+			Tracer:                  qlog.DefaultConnectionTracer,
 		}
 	}
 	slog.Debug("正在远程连接", slog.Any("ServerAddress", cli.netAddr))

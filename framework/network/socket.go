@@ -39,22 +39,18 @@ type MessageCallbackFunc func(string)
 type SocketCallbackFunc func(*Socket)
 
 func NewUdpSocketClient() (*net.UDPConn, error) {
-	//svrAddr, err := net.ResolveUDPAddr(STREAM_NETWORK_UDP, serverAddr)
-	//if err != nil {
-	//	return nil, svrAddr, err
-	//}
 	conn, err := net.ListenUDP(STREAM_NETWORK_UDP, &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
 		return nil, err
 	}
-	//err = conn.SetReadBuffer(DefaultBufferSize)
-	//if err != nil {
-	//	return nil, err
-	//}
-	//err = conn.SetWriteBuffer(DefaultBufferSize)
-	//if err != nil {
-	//	return nil, err
-	//}
+	err = conn.SetReadBuffer(DefaultBufferSize)
+	if err != nil {
+		return nil, err
+	}
+	err = conn.SetWriteBuffer(DefaultBufferSize)
+	if err != nil {
+		return nil, err
+	}
 	return conn, nil
 }
 

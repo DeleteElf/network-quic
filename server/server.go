@@ -7,6 +7,7 @@ import (
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/DeleteElf/zero-net/ice"
 	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/qlog"
 	"log/slog"
 	"net"
 	"strings"
@@ -103,6 +104,7 @@ func (s *Server) StartListen(onDisconnect network.SocketCallbackFunc) {
 			DisablePathMTUDiscovery: false,            // 允许路径 MTU 探索
 			Allow0RTT:               true,
 			EnableDatagrams:         false, //允许直接传输udp
+			Tracer:                  qlog.DefaultConnectionTracer,
 		}
 	}
 	// 4. 构建 quic.Transport（复用刚刚创建的底层 conn）

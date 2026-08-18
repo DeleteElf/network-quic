@@ -6,6 +6,7 @@ import (
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/DeleteElf/zero-net/server"
 	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/qlog"
 	"log/slog"
 	"strconv"
 	"testing"
@@ -128,6 +129,7 @@ func TestServer(t *testing.T) {
 			DisablePathMTUDiscovery: false,            // 允许路径 MTU 探索
 			Allow0RTT:               true,
 			EnableDatagrams:         true, //允许直接传输udp
+			Tracer:                  qlog.DefaultConnectionTracer,
 		}
 		testServer.StartListen(func(sock *network.Socket) {
 			slog.Debug("客户端断开连接：", slog.String("id", sock.Id))
