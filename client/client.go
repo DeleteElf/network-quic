@@ -9,7 +9,7 @@ import (
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/DeleteElf/zero-net/ice"
 	"github.com/quic-go/quic-go"
-	"github.com/quic-go/quic-go/qlog"
+	"github.com/quic-go/quic-go/qlogwriter"
 	"log/slog"
 	"net"
 	"time"
@@ -119,7 +119,10 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 			DisablePathMTUDiscovery: false,
 			Allow0RTT:               true,
 			EnableDatagrams:         false,
-			Tracer:                  qlog.DefaultConnectionTracer,
+			Tracer: func(ctx context.Context, isClient bool, connID quic.ConnectionID) qlogwriter.Trace {
+				ctrl := &network.NetStatusControl{}
+				return network.NewNetStatusTracer(ctrl)
+			},
 		}
 	}
 	slog.Debug("正在远程连接", slog.Any("ServerAddress", cli.netAddr))
