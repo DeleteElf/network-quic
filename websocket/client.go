@@ -154,8 +154,9 @@ func (c *Client) OnClosing() bool {
 	return true
 }
 
-func (c *Client) OnClosed() {
+func (c *Client) OnClosed() error {
 	slog.Debug("websocket已经销毁...")
+	return nil
 }
 
 func (c *Client) SendJson(v any) error {

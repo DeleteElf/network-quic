@@ -2,6 +2,7 @@ package ice
 
 import (
 	"github.com/pion/stun/v3"
+	"io"
 	"net"
 )
 
@@ -9,6 +10,7 @@ import (
 type NetPacketConnection struct {
 	conn   net.PacketConn
 	target net.Addr
+	io.Closer
 }
 
 func NewNetPacketConnection(pConn net.PacketConn, targetAddr net.Addr) stun.Connection {

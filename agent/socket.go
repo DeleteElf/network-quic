@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"github.com/pkg/errors"
+	"io"
 	"net"
 	"time"
 )
@@ -13,6 +14,8 @@ type Socket struct {
 	ReadData  []byte
 	WriteData []byte
 	Idx       uint32
+
+	io.Closer
 }
 
 func (a *Socket) ReadFrom(p []byte) (int, net.Addr, error) {

@@ -109,9 +109,10 @@ func (sc *StreamChannel) OnClosing() bool {
 	return true
 }
 
-func (sc *StreamChannel) OnClosed() {
+func (sc *StreamChannel) OnClosed() error {
 	slog.Debug("检测到通道已经退出！", slog.String("id", sc.ClientId), slog.Int("通道", sc.ChannelId))
 	sc.Buffer = nil
+	return nil
 }
 
 // HandleChannelStreamData 从通道接收流的数据

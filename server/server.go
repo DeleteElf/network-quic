@@ -84,8 +84,9 @@ func (s *Server) OnClosing() bool {
 	return true
 }
 
-func (s *Server) OnClosed() {
+func (s *Server) OnClosed() error {
 	slog.Debug("服务端已经关闭")
+	return nil
 }
 
 func (s *Server) ConnectByIce(conn net.PacketConn) {

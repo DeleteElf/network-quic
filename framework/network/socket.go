@@ -138,11 +138,12 @@ func (s *Socket) OnClosing() bool {
 	return true
 }
 
-func (s *Socket) OnClosed() {
+func (s *Socket) OnClosed() error {
 	slog.Debug("socket 已经退出！", slog.String("id", s.Id))
 	if s.OnDisconnect != nil {
 		s.OnDisconnect(s)
 	}
+	return nil
 }
 
 // CreateChannels 创建通道

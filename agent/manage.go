@@ -90,12 +90,13 @@ func (mgr *ManagePlatform) OnClosing() bool {
 	return true
 }
 
-func (mgr *ManagePlatform) OnClosed() {
+func (mgr *ManagePlatform) OnClosed() error {
 	if mgr.wsConn != nil {
 		_ = mgr.wsConn.Close()
 		mgr.wsConn = nil
 	}
 	slog.Debug("管理平台已经断开！")
+	return nil
 }
 
 func (mgr *ManagePlatform) sendJson(v any) error {

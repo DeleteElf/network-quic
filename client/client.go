@@ -66,8 +66,9 @@ func (cli *Client) OnClosing() bool {
 	return true
 }
 
-func (cli *Client) OnClosed() {
+func (cli *Client) OnClosed() error {
 	slog.Debug("客户端已经关闭")
+	return nil
 }
 
 func (cli *Client) ConnectByIce(conn net.PacketConn) {
