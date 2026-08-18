@@ -1,6 +1,6 @@
 # net
 ### net working on quic-go ,it is go to c project!
-### 本项目主要用于桥接quic-go，项目使用MIT协议
+### 本项目主要用于提供C、C++、go等跨语言跨平台的基础网络连接支持，项目使用AGPL协议
 #### 项目环境需要 go 1.25.9 及以上版本的支持
 1. build.bat 用于编译windows平台。
 2. build.sh 用于编译linux平台。
