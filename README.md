@@ -21,7 +21,8 @@
 
 #### FAQ
 1. 打包出现 go/pkg/tool/linux_amd64/link: running gcc failed: exit status 1
-解决办法： 查找跨平台兼容性问题，答案来自：gemini
+```text
 问题点： app.rc 生成的 app.syso 导致了跨平台编译问题，通过脚本在执行前删除此文件来保证执行的正确性！
+```
 
 2. go在生成dll时，会自动将导出目录下的所有api都生成.h的文件内，我们通过引用的方式加入
