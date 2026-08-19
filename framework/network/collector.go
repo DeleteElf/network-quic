@@ -93,7 +93,7 @@ func (t *NetStatusRecord) RecordEvent(evt qlogwriter.Event) {
 			应用受限 / 挂起		ApplicationLimited / Idle		发送端无数据可发。不是因为网络堵塞，而是应用程序自身没有更多数据要发送，导致 cwnd 暂停增长。
 			超时重传 (部分实现包含)	Loss / RTO (Loss Recovery)		严重拥塞。发生重传超时（RTO）。系统会将 ssthresh 大幅降低，并将 cwnd 标记归零/重置，重新退回 SlowStart 状态。
 		*/
-		slog.Info("[Tracer] 当前拥塞状态:", slog.Any("State", e.State))
+		slog.Info("[Tracer]监测到网络状态发生变化，当前拥塞状态:", slog.Any("State", e.State))
 		break
 	case qlog.MetricsUpdated: //捕捉 RTT 或拥塞窗口 (CWND) 更新 ，从目前侦测的数据来看，6秒触发一次
 		now := time.Now()
@@ -113,7 +113,7 @@ func (t *NetStatusRecord) RecordEvent(evt qlogwriter.Event) {
 		t.tracer.LostRate = float64(t.tracer.LostPackets*100) / float64(t.tracer.SentPackets)
 		t.tracer.DroppedRate = float64(t.tracer.DroppedPackets*100) / float64(t.tracer.ReceivedPackets)
 		if t.tracer.control.IsShowStatus {
-			slog.Info("网络监控数据", slog.Any("带宽", bandwidthEstimate), slog.Any("拥塞窗口", e.CongestionWindow),
+			slog.Info("[Tracer]网络监控数据", slog.Any("带宽", bandwidthEstimate), slog.Any("拥塞窗口", e.CongestionWindow),
 				slog.Any("在途数据量", e.BytesInFlight), slog.Any("在途数据包数", e.PacketsInFlight),
 				slog.Any("最新往返时间", e.LatestRTT), slog.Any("平滑往返时间", t.tracer.SmoothedRTT),
 				slog.Any("发送", t.tracer.SentPackets), slog.Any("丢包数", t.tracer.LostPackets), slog.Any("丢包率", t.tracer.LostRate),
@@ -127,7 +127,7 @@ func (t *NetStatusRecord) RecordEvent(evt qlogwriter.Event) {
 		break
 	// 4. 捕捉连接关闭事件
 	case qlog.ConnectionClosed:
-		slog.Info("[Tracer] 连接关闭:", slog.Any("Reason", e.Reason))
+		slog.Info("[Tracer]连接关闭:", slog.Any("Reason", e.Reason))
 		break
 	}
 }
