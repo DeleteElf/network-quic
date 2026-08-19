@@ -1,6 +1,6 @@
 # net
 ### net working on quic-go ,it is go to c project!
-### 本项目主要用于提供C、C++、go等跨语言跨平台的基础网络连接支持，项目使用AGPL协议
+### 本项目主要用于提供C、C++、go等跨语言跨平台的基础网络连接支持
 #### 项目环境需要 go 1.25.9 及以上版本的支持
 1. build.bat 用于编译windows平台。
 2. build.sh 用于编译linux平台。
@@ -8,16 +8,16 @@
 4. 新增xdp的代理支持。
 
 #### 代码架构
-agent       代理逻辑
-client      客户端逻辑
-exports     导出的api
-framework   架构基础
-ice         pion ice打洞支持
-main        导出的入口
-output      成果输出目录
-server      服务端逻辑
-tests       单元测试
-websocket   websocket协议支持
+1. agent       代理逻辑
+2. client      客户端逻辑
+3. exports     导出的api
+4. framework   架构基础
+5. ice         pion ice打洞支持
+6. main        导出的入口
+7. output      成果输出目录
+8. server      服务端逻辑
+9. tests       单元测试
+10. websocket   websocket协议支持
 
 #### FAQ
 1. 打包出现 go/pkg/tool/linux_amd64/link: running gcc failed: exit status 1
