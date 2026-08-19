@@ -186,6 +186,7 @@ func ClientConnect(channelCount C.int, config *C.NetworkData) C.int {
 			data := utils.JsonObject{}
 			data["type"] = "offer"
 			data["sdp"] = offer //"a=candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localIp + " rport " + strs[len(strs)-1]
+			clientCtx.IceLocalInfo = data
 			jsonData, err := utils.ToJsonString(data)
 			body, err := network.HttpRequest(url, http.MethodPost, token, bytes.NewBufferString(jsonData))
 			if err != nil {
@@ -339,23 +340,7 @@ func ServerCreate(config *C.NetworkData) C.int {
 	if networkType != network.STREAM_NETWORK_UDP {
 		return C.ErrorParam
 	}
-	//var localInfo utils.JsonObject
-	if jsonObject["stun"] != nil && jsonObject["mgr_addr"] != nil && jsonObject["apikey"] != nil {
-		url := fmt.Sprintf("%s/device?type=device&apikey=%s",
-			jsonObject["mgr_addr"].(string), jsonObject["apikey"].(string))
-		ws := websocket.NewClient()
-		ws.HeartTimeout = time.Second * 5
-		ws.OnConnected = func(address string) {
-			slog.Info("与Ice服务端连接", slog.String("address", address))
-			ws.Send("{\"action\":\"register\",\"appid\":0,\"info\":{\"hostname\":\"PC-PAQHBVPFDXTY\",\"version\":\"1.0.26.080501\",\"appVersion\":\"7.1.431.-1\",\"gfeVersion\":\"3.23.0.74\",\"cpuid\":\"0000001068747541444D416369746E65_34-5A-60-7B-98-E1\",\"cpu\":\"AMD Ryzen 5 5600GT with Radeon Graphics\",\"mac\":\"34-5A-60-7B-98-E1\",\"ip\":\"192.168.199.22\",\"gpu\":\"\",\"ram\":\"27.90 GB (3.89 GB 可用)\",\"os\":\"windows NT 10 22H2\",\"apps\":[{\"id\":\"10000\",\"name\":\"Desktop\"}]}}")
-		}
-		ws.OnDisconnected = func(reason string) {
-			slog.Info("与Ice服务端断开连接", slog.String("reason", reason))
-			if ws.Reconnect && !ws.IsClosed {
-				_ = ws.Connect(ws.Address, ws.HeartMessage)
-			}
-		}
-
+	if jsonObject["stun"] != nil {
 		serverCtx = server.NewServer(nil, false)
 		//serverCtx.Stun = []string{"stun:stun.l.google.com:19302"}
 		serverCtx.Stun = strings.Split(jsonObject["stun"].(string), ",")
@@ -363,52 +348,7 @@ func ServerCreate(config *C.NetworkData) C.int {
 		localInfo := utils.JsonObject{}
 		localInfo["type"] = "answer"
 		localInfo["sdp"] = answer
-
-		ws.OnMessage = func(msg string) {
-			data, err := utils.GetJsonObject([]byte(msg))
-			if err == nil && data["data"] != nil {
-				body := data["data"].(map[string]interface{})
-				action := data["action"].(string)
-				switch action {
-				case "ice":
-					if body["type"] != nil && body["sdp"] != nil && body["type"].(string) == "offer" {
-						result := utils.JsonObject{}
-						//sdpBody := utils.JsonObject{}
-						result["success"] = "true"
-						result["action"] = data["action"].(string)
-						result["type"] = "response"
-						sessionId := ""
-						if body["session_id"] != nil {
-							sessionId = body["session_id"].(string)
-							result["session_id"] = sessionId
-						}
-						result["data"] = localInfo
-						re, e := utils.ToJsonString(result)
-						if len(re) > 0 && e == nil {
-							slog.Debug("发送本机信令数据给客户端", slog.String("data", re))
-							_ = ws.Send(re)
-						}
-						conn := serverCtx.PunchHole(body["sdp"].(string), 30*time.Second, true)
-						serverCtx.ConnectByIce(conn)
-						go func() {
-							serverCtx.StartListen(func(sock *network.Socket) {
-								slog.Debug("客户端断开连接：", slog.String("id", sock.Id))
-							})
-						}()
-					}
-					break
-				default:
-					break
-				}
-			}
-		}
-		go func() {
-			//err := ws.Connect("wss://192.168.199.159:3005/device?type=device&apikey=575D6618206A2754", websocket.DefaultHeartMessage)
-			err := ws.Connect(url, websocket.DefaultHeartMessage)
-			if err != nil {
-				slog.Error("连接发生错误", slog.Any("err", err))
-			}
-		}()
+		serverCtx.IceLocalInfo = localInfo
 	} else {
 		serverCtx = server.NewServerByAddress(address) //尝试连接本机服务
 	}
@@ -764,7 +704,51 @@ func WebSocketSend(msg *C.char) C.int {
 func SetOnWebSocketMessageCallback(callback C.MessageCallback) {
 	if websocketClient != nil {
 		websocketClient.OnMessage = func(msg string) {
-			if callback != nil {
+			data, err := utils.GetJsonObject([]byte(msg))
+			if err == nil && data["data"] != nil {
+				body := data["data"].(map[string]interface{})
+				action := data["action"].(string)
+				switch action {
+				case "ice": //作为ice
+					if body["type"] != nil && body["sdp"] != nil && body["type"].(string) == "offer" { //仅当作为ice服务，接收offer时触发
+						result := utils.JsonObject{}
+						//sdpBody := utils.JsonObject{}
+						result["success"] = "true"
+						result["action"] = data["action"].(string)
+						result["type"] = "response"
+						sessionId := ""
+						if body["session_id"] != nil {
+							sessionId = body["session_id"].(string)
+							result["session_id"] = sessionId
+						}
+						if serverCtx != nil && !serverCtx.IsClosed && len(serverCtx.IceLocalInfo) > 0 {
+							result["data"] = serverCtx.IceLocalInfo
+							re, e := utils.ToJsonString(result)
+							if len(re) > 0 && e == nil {
+								slog.Debug("发送本机信令数据给客户端", slog.String("data", re))
+								_ = websocketClient.Send(re)
+							}
+							conn := serverCtx.PunchHole(body["sdp"].(string), 10*time.Second, true)
+							serverCtx.ConnectByIce(conn)
+							go func() {
+								serverCtx.StartListen(func(sock *network.Socket) {
+									slog.Debug("客户端断开连接：", slog.String("id", sock.Id))
+								})
+							}()
+						} else {
+							slog.Warn("接入ice时，因条件不满足而中断！")
+						}
+					} else if callback != nil {
+						C.callMessageCallback(callback, C.CString(msg))
+					}
+					break
+				default:
+					if callback != nil {
+						C.callMessageCallback(callback, C.CString(msg))
+					}
+					break
+				}
+			} else if callback != nil {
 				C.callMessageCallback(callback, C.CString(msg))
 			}
 		}

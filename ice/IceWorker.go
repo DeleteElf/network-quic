@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/deleteelf/goframework/utils/jsonhelper"
 	"github.com/pion/ice/v4"
 	"log/slog"
@@ -44,8 +45,9 @@ type IceWorkInterface interface {
 }
 
 type IceWorker struct {
-	Stun  []string
-	Agent *ice.Agent
+	Stun         []string
+	IceLocalInfo utils.JsonObject
+	Agent        *ice.Agent
 	IceWorkInterface
 }
 
