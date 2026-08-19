@@ -16,16 +16,14 @@ import (
 func TestIceClient(t *testing.T) {
 	utils.InitLog(slog.LevelDebug, nil)   //初始化日志
 	cli := client.NewClient("", "test01") //尝试连接外网本机服务
-	//cli.Stun = []string{"stun:stun.l.google.com:19302", "stun:stun.new0.com.cn:3478"}
 	cli.Stun = []string{"stun:stun.l.google.com:19302"}
-	//cli.Stun = []string{"stun:stun.new0.com.cn:3478"} //客户端和服务端2个不同的stun也测试通过了
 	if len(cli.Stun) > 0 {
-		offer, err := cli.DetectStun(0, 0)
+		offer, err := cli.DetectStunByDefault()
 		data := utils.JsonObject{}
 		data["type"] = "offer"
 		data["sdp"] = offer //"a=candidate:1 1 UDP 2130706431 " + remoteAddress + " " + strconv.Itoa(port) + " typ srflx raddr " + localIp + " rport " + strs[len(strs)-1]
 		jsonData, err := utils.ToJsonString(data)
-		body, err := network.HttpRequest("https://36.249.161.74:3005/ice?device_id=0A76DE8C-1AB1-35C3-A137-FC9E10B1EF9F",
+		body, err := network.HttpRequest("https://192.168.199.159:3005/ice?device_id=0A76DE8C-1AB1-35C3-A137-FC9E10B1EF9F",
 			http.MethodPost, "0DBDB1AE-CABD-F2BA-4F89-132A39EC90D1", bytes.NewBufferString(jsonData))
 		if err != nil {
 			slog.Error("读取http应答的body出错！", slog.Any("err", err))
@@ -142,8 +140,7 @@ func TestIceServer(t *testing.T) {
 		}
 	}
 	go func() {
-		//err := ws.Connect("wss://192.168.199.159:3005/device?type=device&apikey=575D6618206A2754", websocket.DefaultHeartMessage)
-		err := ws.Connect("wss://36.249.161.74:3005/device?type=device&apikey=575D6618206A2754", websocket.DefaultHeartMessage)
+		err := ws.Connect("wss://192.168.199.159:3005/device?type=device&apikey=575D6618206A2754", websocket.DefaultHeartMessage)
 		if err != nil {
 			slog.Error("连接发生错误", slog.Any("err", err))
 		}

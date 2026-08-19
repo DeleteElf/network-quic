@@ -55,6 +55,11 @@ type SignalInfo struct {
 	Candidates []string `json:"candidates"`
 }
 
+// DetectStunByDefault 探测stun服务获取公网ip和端口
+func (iw *IceWorker) DetectStunByDefault() (offer string, err error) {
+	return iw.DetectStun(0, 0)
+}
+
 // DetectStun 探测stun服务获取公网ip和端口
 func (iw *IceWorker) DetectStun(portMin, portMax uint16) (offer string, err error) {
 	config := &ice.AgentConfig{

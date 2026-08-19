@@ -110,8 +110,16 @@ func (t *NetStatusRecord) RecordEvent(evt qlogwriter.Event) {
 		}
 		bandwidthEstimate := uint64(e.CongestionWindow) * uint64(time.Second/srtt) * 8 //bps
 		t.tracer.BWEstimate = float64(bandwidthEstimate) / 1000                        //kbps
-		t.tracer.LostRate = float64(t.tracer.LostPackets*100) / float64(t.tracer.SentPackets)
-		t.tracer.DroppedRate = float64(t.tracer.DroppedPackets*100) / float64(t.tracer.ReceivedPackets)
+		if t.tracer.SentPackets == 0 {
+			t.tracer.LostRate = 0
+		} else {
+			t.tracer.LostRate = float64(t.tracer.LostPackets*100) / float64(t.tracer.SentPackets)
+		}
+		if t.tracer.ReceivedPackets == 0 {
+			t.tracer.DroppedRate = 0
+		} else {
+			t.tracer.DroppedRate = float64(t.tracer.DroppedPackets*100) / float64(t.tracer.ReceivedPackets)
+		}
 		if t.tracer.control.IsShowStatus {
 			slog.Info("[Tracer]网络监控数据", slog.Any("带宽", bandwidthEstimate), slog.Any("拥塞窗口", e.CongestionWindow),
 				slog.Any("在途数据量", e.BytesInFlight), slog.Any("在途数据包数", e.PacketsInFlight),
