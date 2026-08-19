@@ -120,7 +120,7 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 			Allow0RTT:               true,
 			EnableDatagrams:         false,
 			Tracer: func(ctx context.Context, isClient bool, connID quic.ConnectionID) qlogwriter.Trace {
-				ctrl := &network.NetStatusControl{}
+				ctrl := &network.NetStatusControl{IsShowStatus: true}
 				return network.NewNetStatusTracer(ctrl)
 			},
 		}
