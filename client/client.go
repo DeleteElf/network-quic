@@ -19,9 +19,6 @@ import (
 type Client struct {
 	Id        string
 	SessionId string
-	//外网地址
-	ExternalIp   string
-	ExternalPort int
 	//需要连接的服务端地址
 	ServerAddress string
 	netAddr       net.Addr

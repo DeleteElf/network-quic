@@ -24,10 +24,6 @@ type Stream struct {
 }
 
 type Server struct {
-	//外网地址
-	ExternalIp   string
-	ExternalPort int
-
 	isAgent  bool
 	listener *quic.Listener
 	Sockets  map[string]*network.Socket
