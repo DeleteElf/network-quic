@@ -96,6 +96,10 @@ func (s *Server) ConnectByIce(conn net.PacketConn) {
 func (s *Server) StartListen(onDisconnect network.SocketCallbackFunc) {
 	tlsConfig := utils.GenTLSConfig()
 	if s.Config == nil {
+		ctrl := &network.NetStatusControl{ShowStatusLevel: network.StatusLevelLostPacket}
+		ctrl.OnCongestionStateChanged = func(tracer *network.NetStatusTracer) {
+			slog.Debug("探测到网络状态发生变化")
+		}
 		s.Config = &quic.Config{
 			// MaxIncomingStreams: 0xffffffffffff, // 最大默认stream输入，默认100
 			HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
@@ -106,7 +110,6 @@ func (s *Server) StartListen(onDisconnect network.SocketCallbackFunc) {
 			Allow0RTT:               true,
 			EnableDatagrams:         false, //允许直接传输udp
 			Tracer: func(ctx context.Context, isClient bool, connID quic.ConnectionID) qlogwriter.Trace {
-				ctrl := &network.NetStatusControl{ShowStatusLevel: network.StatusLevelLostPacket}
 				return network.NewNetStatusTracer(ctrl)
 			},
 		}

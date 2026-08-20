@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+type OnCongestionStateChangedCallback func(tracer *NetStatusTracer)
 type StatusLevel int
 
 const (
@@ -17,13 +18,12 @@ const (
 	StatusLevelAll
 )
 
-type NetStatusControl struct {
-	ShowStatusLevel StatusLevel
-}
-
 type NetStatusTracer struct {
+	BufferedBytes   uint64
 	SentPackets     uint64
+	SentBytes       uint64
 	ReceivedPackets uint64
+	ReceivedBytes   uint64
 	LostPackets     uint64
 	DroppedPackets  uint64
 	SmoothedRTT     uint64
@@ -65,12 +65,16 @@ func (t *NetStatusTracer) AddProducer() qlogwriter.Recorder {
 func (t *NetStatusRecord) RecordEvent(evt qlogwriter.Event) {
 	// 通过类型断言识别具体的 event 结构体
 	switch e := evt.(type) {
-	case qlog.PacketLost: // 1. 捕捉丢包事件
-		atomic.AddUint64(&t.tracer.LostPackets, 1)
+	case qlog.PacketBuffered:
+		atomic.AddUint64(&t.tracer.BufferedBytes, uint64(e.Raw.Length))
 	case qlog.PacketSent:
 		atomic.AddUint64(&t.tracer.SentPackets, 1)
+		atomic.AddUint64(&t.tracer.SentBytes, uint64(e.Raw.Length))
+	case qlog.PacketLost: // 1. 捕捉丢包事件
+		atomic.AddUint64(&t.tracer.LostPackets, 1)
 	case qlog.PacketReceived:
 		atomic.AddUint64(&t.tracer.ReceivedPackets, 1)
+		atomic.AddUint64(&t.tracer.ReceivedBytes, uint64(e.Raw.Length))
 	case qlog.PacketDropped:
 		atomic.AddUint64(&t.tracer.DroppedPackets, 1)
 	case qlog.CongestionStateUpdated: //拥塞状态变更 (SlowStart / Recovery 等)
@@ -83,19 +87,34 @@ func (t *NetStatusRecord) RecordEvent(evt qlogwriter.Event) {
 			超时重传 (部分实现包含)	Loss / RTO (Loss Recovery)		严重拥塞。发生重传超时（RTO）。系统会将 ssthresh 大幅降低，并将 cwnd 标记归零/重置，重新退回 SlowStart 状态。
 		*/
 		if t.tracer.LastCongestionState != string(e.State) {
-			if t.tracer.control.ShowStatusLevel != StatusLevelNone {
-				switch e.State {
-				case qlog.CongestionStateSlowStart:
+			switch e.State {
+			case qlog.CongestionStateSlowStart:
+				if t.tracer.control.ShowStatusLevel != StatusLevelNone {
 					slog.Info("网络监控，当前状态:探测可用带宽！")
-				case qlog.CongestionStateRecovery:
+				}
+				t.tracer.LastCongestionState = string(e.State)
+				if t.tracer.control.OnCongestionStateChanged != nil {
+					t.tracer.control.OnCongestionStateChanged(t.tracer)
+				}
+			case qlog.CongestionStateRecovery:
+				if t.tracer.control.ShowStatusLevel != StatusLevelNone {
 					slog.Info("网络监控，当前状态:轻微拥塞！")
-				default:
-					if t.tracer.LastCongestionState == string(qlog.CongestionStateRecovery) {
+				}
+				t.tracer.LastCongestionState = string(e.State)
+				if t.tracer.control.OnCongestionStateChanged != nil {
+					t.tracer.control.OnCongestionStateChanged(t.tracer)
+				}
+			default:
+				if t.tracer.LastCongestionState == string(qlog.CongestionStateRecovery) {
+					if t.tracer.control.ShowStatusLevel != StatusLevelNone {
 						slog.Info("网络监控，当前状态：从拥塞中恢复！")
+					}
+					t.tracer.LastCongestionState = string(e.State)
+					if t.tracer.control.OnCongestionStateChanged != nil {
+						t.tracer.control.OnCongestionStateChanged(t.tracer)
 					}
 				}
 			}
-			t.tracer.LastCongestionState = string(e.State)
 		}
 	case qlog.MetricsUpdated: //捕捉 RTT 或拥塞窗口 (CWND) 更新 ，从目前侦测的数据来看，6秒触发一次
 		// 1. 持续更新本地缓存（CWND 和 RTT 增量更新机制）

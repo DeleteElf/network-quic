@@ -318,6 +318,7 @@ func (s *Socket) SetFecParam(channelId, dataShards, parityShards int) {
 }
 
 func (s *Socket) SendFecDatagram(channelId int, frameIndex int64, data []byte) error {
+	slog.Debug("待发送的未编码数据包", slog.Int("ChannelId", channelId), slog.Any("长度", len(data)))
 	total := len(data)
 	shards, err := s.StreamChannels[channelId].Encoder.Split(data)
 	if err != nil {
