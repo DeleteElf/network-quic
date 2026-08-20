@@ -66,7 +66,6 @@ func (t *NetStatusRecord) RecordEvent(evt qlogwriter.Event) {
 	case qlog.PacketDropped:
 		atomic.AddUint64(&t.tracer.DroppedPackets, 1)
 	case qlog.CongestionStateUpdated: //拥塞状态变更 (SlowStart / Recovery 等)
-
 		/*
 			状态名称 			常用枚举 						表示触发条件
 			慢启动				SlowStart / CongestionSlowStart	初始/探测状态。连接刚建立或超时重传后进入。拥塞窗口（cwnd）呈指数级增长，以快速探知网络可用带宽。
@@ -75,19 +74,21 @@ func (t *NetStatusRecord) RecordEvent(evt qlogwriter.Event) {
 			应用受限 / 挂起		ApplicationLimited / Idle		发送端无数据可发。不是因为网络堵塞，而是应用程序自身没有更多数据要发送，导致 cwnd 暂停增长。
 			超时重传 (部分实现包含)	Loss / RTO (Loss Recovery)		严重拥塞。发生重传超时（RTO）。系统会将 ssthresh 大幅降低，并将 cwnd 标记归零/重置，重新退回 SlowStart 状态。
 		*/
-		if t.tracer.control.IsShowStatus {
-			switch e.State {
-			case qlog.CongestionStateSlowStart:
-				slog.Info("网络监控，当前状态:探测可用带宽！")
-			case qlog.CongestionStateRecovery:
-				slog.Info("网络监控，当前状态:轻微拥塞！")
-			default:
-				if t.tracer.LastCongestionState == string(qlog.CongestionStateRecovery) {
-					slog.Info("网络监控，当前状态：从拥塞中恢复！")
+		if t.tracer.LastCongestionState != string(e.State) {
+			if t.tracer.control.IsShowStatus {
+				switch e.State {
+				case qlog.CongestionStateSlowStart:
+					slog.Info("网络监控，当前状态:探测可用带宽！")
+				case qlog.CongestionStateRecovery:
+					slog.Info("网络监控，当前状态:轻微拥塞！")
+				default:
+					if t.tracer.LastCongestionState == string(qlog.CongestionStateRecovery) {
+						slog.Info("网络监控，当前状态：从拥塞中恢复！")
+					}
 				}
 			}
+			t.tracer.LastCongestionState = string(e.State)
 		}
-		t.tracer.LastCongestionState = string(e.State)
 	case qlog.MetricsUpdated: //捕捉 RTT 或拥塞窗口 (CWND) 更新 ，从目前侦测的数据来看，6秒触发一次
 		// 1. 持续更新本地缓存（CWND 和 RTT 增量更新机制）
 		if e.CongestionWindow > 0 {
