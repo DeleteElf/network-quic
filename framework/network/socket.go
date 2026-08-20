@@ -66,10 +66,10 @@ func NewUdpSocketServer(addr string) (net.PacketConn, error) {
 	}
 	config.SetMultipathTCP(false)
 	conn, err := config.ListenPacket(context.Background(), STREAM_NETWORK_UDP, addr)
-
 	if err != nil {
 		return nil, err
 	}
+	slog.Debug("udp服务端口已开启", slog.Any("addr", conn.LocalAddr().String()))
 	if udpConn, ok := conn.(*net.UDPConn); ok {
 		err = udpConn.SetReadBuffer(DefaultBufferSize)
 		if err != nil {

@@ -198,7 +198,11 @@ func ClientConnect(channelCount C.int, config *C.NetworkData) C.int {
 				answer := result["data"].(map[string]interface{})
 				if answer["sdp"] != nil {
 					conn := clientCtx.PunchHole(answer["sdp"].(string), 30*time.Second, false)
-					clientCtx.ConnectByIce(conn)
+					err := clientCtx.ConnectByIce(conn)
+					if err != nil {
+						slog.Error("客户端穿墙连接失败", slog.Any("err", err))
+						return C.Error
+					}
 				}
 			}
 		} else {

@@ -71,14 +71,13 @@ func (cli *Client) OnClosed() error {
 	return nil
 }
 
-func (cli *Client) ConnectByIce(conn net.PacketConn) {
+func (cli *Client) ConnectByIce(conn net.PacketConn) error {
 	cli.NetConn = conn
 	// 注意：因为使用的是已知打通的 PacketConn，Target Address 可以使用 Dummy 虚拟地址
 	dummyAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}
-	cli.ConnectToNet(3, nil, dummyAddr, func(sock *network.Socket) {
+	return cli.ConnectToNet(3, nil, dummyAddr, func(sock *network.Socket) {
 		slog.Debug("socket已经断开===》！", slog.String("id", sock.Id))
 	})
-
 }
 
 func (cli *Client) Connect(channelCount int, networkType string, onDisconnect network.SocketCallbackFunc) error {

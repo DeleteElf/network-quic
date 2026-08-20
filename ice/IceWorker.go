@@ -179,6 +179,6 @@ func (iw *IceWorker) PunchHole(message string, timeout time.Duration, isServer b
 		return nil
 	}
 
-	slog.Debug("[ICE] 🎉 打洞成功！UDP 链路已就绪。")
+	slog.Debug("[ICE]打洞成功！UDP 链路已就绪。")
 	return NewICEPacketConn(iceConn)
 }
