@@ -27,7 +27,8 @@ type Client struct {
 	QuicConn *quic.Conn
 	Socket   *network.Socket
 
-	Config *quic.Config
+	SupportFec bool
+	Config     *quic.Config
 
 	ice.IceWorker
 	framework.CloseableObject
@@ -38,6 +39,7 @@ func NewClient(addr string, id string) *Client {
 	cli := &Client{
 		ServerAddress: addr,
 		Id:            id,
+		SupportFec:    false,
 	}
 	cli.IsClosed = false
 	cli.SetOnCloseHandler(cli)
@@ -68,10 +70,14 @@ func (cli *Client) OnClosed() error {
 	return nil
 }
 
-func (cli *Client) ConnectByIce(conn net.PacketConn) error {
+// ConnectByIce 通过Ice连接
+//
+//	-param conn:通过Ice获取到的连接
+//	-param dummyAddr:通过ice获取的连接的目标地址，注意：因为使用的是已知打通的 PacketConn，Target Address 可以使用 Dummy 虚拟地址
+//
+// return: 返回错误
+func (cli *Client) ConnectByIce(conn net.PacketConn, dummyAddr net.Addr) error {
 	cli.NetConn = conn
-	// 注意：因为使用的是已知打通的 PacketConn，Target Address 可以使用 Dummy 虚拟地址
-	dummyAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}
 	return cli.ConnectToNet(3, nil, dummyAddr, func(sock *network.Socket) {
 		slog.Debug("socket已经断开===》！", slog.String("id", sock.Id))
 	})
@@ -114,7 +120,7 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 			InitialPacketSize:       1400,             //当前最大数据包一个基础包的大小
 			DisablePathMTUDiscovery: false,
 			Allow0RTT:               true,
-			EnableDatagrams:         false,
+			EnableDatagrams:         cli.SupportFec,
 			Tracer: func(ctx context.Context, isClient bool, connID quic.ConnectionID) qlogwriter.Trace {
 				ctrl := &network.NetStatusControl{ShowStatusLevel: network.StatusLevelLostPacket}
 				return network.NewNetStatusTracer(ctrl)
@@ -126,7 +132,6 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 		Conn: cli.NetConn,
 	}
 	quicConn, err := tr.Dial(context.Background(), cli.netAddr, tlsConfig, cli.Config)
-	//quicConn, err := quic.Dial(context.TODO(), cli.NetConn, cli.netAddr, tlsConfig, cli.Config)
 	if err != nil {
 		slog.Info("远程连接失败！", slog.Any("err", err))
 		return err

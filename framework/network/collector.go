@@ -168,7 +168,9 @@ func (t *NetStatusRecord) RecordEvent(evt qlogwriter.Event) {
 		}
 	// 4. 捕捉连接关闭事件
 	case qlog.ConnectionClosed:
-		slog.Info("[Tracer]连接关闭:", slog.Any("Reason", e.Reason))
+		if t.tracer.control.ShowStatusLevel != StatusLevelNone {
+			slog.Info("网络监控到连接关闭:", slog.Any("Reason", e.Reason))
+		}
 	}
 }
 

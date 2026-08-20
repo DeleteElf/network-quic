@@ -24,13 +24,14 @@ type Stream struct {
 }
 
 type Server struct {
-	isAgent  bool
-	listener *quic.Listener
-	Sockets  map[string]*network.Socket
-	NetConn  net.PacketConn
-	QuicConn *quic.Conn
-	Config   *quic.Config
-	lock     sync.Mutex
+	isAgent    bool
+	listener   *quic.Listener
+	Sockets    map[string]*network.Socket
+	NetConn    net.PacketConn
+	QuicConn   *quic.Conn
+	Config     *quic.Config
+	lock       sync.Mutex
+	SupportFec bool
 
 	OnAcceptSocket       network.SocketCallbackFunc
 	OnSocketDisConnected network.SocketCallbackFunc
@@ -52,12 +53,12 @@ func NewServerByAddress(address string) *Server {
 // NewServer 创建新的服务实例
 func NewServer(conn net.PacketConn, isAgent bool) *Server {
 	svr := &Server{
-		isAgent: isAgent,
-		Sockets: make(map[string]*network.Socket),
+		isAgent:    isAgent,
+		Sockets:    make(map[string]*network.Socket),
+		SupportFec: false,
 	}
 	svr.NetConn = conn
 	svr.IsClosed = false
-	//svr.IceChannel = make(chan ice.IceObject)
 	svr.SetOnCloseHandler(svr)
 	return svr
 }
@@ -104,7 +105,7 @@ func (s *Server) StartListen(onDisconnect network.SocketCallbackFunc) {
 			InitialPacketSize:       1500,             //初始包大小
 			DisablePathMTUDiscovery: false,            // 允许路径 MTU 探索
 			Allow0RTT:               true,
-			EnableDatagrams:         false, //允许直接传输udp
+			EnableDatagrams:         s.SupportFec, //允许直接传输udp
 			Tracer: func(ctx context.Context, isClient bool, connID quic.ConnectionID) qlogwriter.Trace {
 				return network.NewNetStatusTracer(ctrl)
 			},

@@ -139,10 +139,10 @@ func (iw *IceWorker) DetectStun(portMin, portMax uint16) (offer string, err erro
 }
 
 // PunchHole 【客户端打洞】：持续向服务端发包开洞，并等待服务端的回应
-func (iw *IceWorker) PunchHole(message string, timeout time.Duration, isServer bool) net.PacketConn {
+func (iw *IceWorker) PunchHole(message string, timeout time.Duration, isServer bool) (net.PacketConn, net.Addr) {
 	if iw.Agent == nil {
 		slog.Warn("请先创建探测stun，再执行打洞！")
-		return nil
+		return nil, nil
 	}
 	remoteB64 := strings.TrimSpace(message)
 	remoteJSON, _ := base64.StdEncoding.DecodeString(remoteB64)
@@ -152,7 +152,8 @@ func (iw *IceWorker) PunchHole(message string, timeout time.Duration, isServer b
 	// 设置对端凭证与候选地址
 	err := iw.Agent.SetRemoteCredentials(remoteInfo.Ufrag, remoteInfo.Pwd)
 	if err != nil {
-		panic(err)
+		slog.Warn("设置远程认证服务时发生错误！", slog.Any("err", err))
+		return nil, nil
 	}
 
 	for _, cStr := range remoteInfo.Candidates {
@@ -176,9 +177,9 @@ func (iw *IceWorker) PunchHole(message string, timeout time.Duration, isServer b
 
 	if err != nil {
 		slog.Debug("[ICE] 打洞失败: %v\n", err)
-		return nil
+		return nil, nil
 	}
 
 	slog.Debug("[ICE]打洞成功！UDP 链路已就绪。", slog.String("远程地址", iceConn.RemoteAddr().String()))
-	return NewICEPacketConn(iceConn)
+	return NewICEPacketConn(iceConn), iceConn.RemoteAddr()
 }

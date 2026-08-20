@@ -177,6 +177,9 @@ func ClientConnect(channelCount C.int, config *C.NetworkData) C.int {
 		}
 	} else {
 		clientCtx = client.NewClient(address, id) //尝试连接本机服务
+		if jsonObject["fec"] != nil {
+			clientCtx.SupportFec = jsonObject["fec"].(bool)
+		}
 		if jsonObject["stun"] != nil && jsonObject["mgr_addr"] != nil && jsonObject["token"] != nil && jsonObject["dev_id"] != nil {
 			token := jsonObject["token"].(string)
 			url := fmt.Sprintf("%s/ice?device_id=%s",
@@ -197,8 +200,8 @@ func ClientConnect(channelCount C.int, config *C.NetworkData) C.int {
 			if result["data"] != nil {
 				answer := result["data"].(map[string]interface{})
 				if answer["sdp"] != nil {
-					conn := clientCtx.PunchHole(answer["sdp"].(string), 30*time.Second, false)
-					err := clientCtx.ConnectByIce(conn)
+					conn, addr := clientCtx.PunchHole(answer["sdp"].(string), 30*time.Second, false)
+					err := clientCtx.ConnectByIce(conn, addr)
 					if err != nil {
 						slog.Error("客户端穿墙连接失败", slog.Any("err", err))
 						return C.Error
@@ -355,6 +358,9 @@ func ServerCreate(config *C.NetworkData) C.int {
 		serverCtx.IceLocalInfo = localInfo
 	} else {
 		serverCtx = server.NewServerByAddress(address) //尝试连接本机服务
+	}
+	if jsonObject["fec"] != nil {
+		serverCtx.Config.EnableDatagrams = jsonObject["fec"].(bool)
 	}
 	serverCtx.OnAcceptSocket = func(sock *network.Socket) {
 		socketMap[sock.Id] = sock
@@ -732,7 +738,7 @@ func SetOnWebSocketMessageCallback(callback C.MessageCallback) {
 								slog.Debug("发送本机信令数据给客户端", slog.String("data", re))
 								_ = websocketClient.Send(re)
 							}
-							conn := serverCtx.PunchHole(body["sdp"].(string), 10*time.Second, true)
+							conn, _ := serverCtx.PunchHole(body["sdp"].(string), 10*time.Second, true)
 							serverCtx.ConnectByIce(conn)
 							go func() {
 								serverCtx.StartListen(func(sock *network.Socket) {

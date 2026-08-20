@@ -33,8 +33,12 @@ func TestIceClient(t *testing.T) {
 		if result["data"] != nil {
 			answer := result["data"].(map[string]interface{})
 			if answer["sdp"] != nil {
-				conn := cli.PunchHole(answer["sdp"].(string), 30*time.Second, false)
-				cli.ConnectByIce(conn)
+				conn, addr := cli.PunchHole(answer["sdp"].(string), 30*time.Second, false)
+				err := cli.ConnectByIce(conn, addr)
+				if err != nil {
+					slog.Info("连接失败！", slog.Any("err", err))
+					return
+				}
 			}
 		}
 	} else {
@@ -125,7 +129,7 @@ func TestIceServer(t *testing.T) {
 						slog.Debug("发送本机信令数据给客户端", slog.String("data", re))
 						_ = ws.Send(re)
 					}
-					conn := testServer.PunchHole(body["sdp"].(string), 30*time.Second, true)
+					conn, _ := testServer.PunchHole(body["sdp"].(string), 30*time.Second, true)
 					testServer.ConnectByIce(conn)
 					go func() {
 						testServer.StartListen(func(sock *network.Socket) {
