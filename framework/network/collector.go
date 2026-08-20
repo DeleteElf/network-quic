@@ -9,8 +9,16 @@ import (
 	"time"
 )
 
+type StatusLevel int
+
+const (
+	StatusLevelNone StatusLevel = iota
+	StatusLevelLostPacket
+	StatusLevelAll
+)
+
 type NetStatusControl struct {
-	IsShowStatus bool
+	ShowStatusLevel StatusLevel
 }
 
 type NetStatusTracer struct {
@@ -75,7 +83,7 @@ func (t *NetStatusRecord) RecordEvent(evt qlogwriter.Event) {
 			超时重传 (部分实现包含)	Loss / RTO (Loss Recovery)		严重拥塞。发生重传超时（RTO）。系统会将 ssthresh 大幅降低，并将 cwnd 标记归零/重置，重新退回 SlowStart 状态。
 		*/
 		if t.tracer.LastCongestionState != string(e.State) {
-			if t.tracer.control.IsShowStatus {
+			if t.tracer.control.ShowStatusLevel != StatusLevelNone {
 				switch e.State {
 				case qlog.CongestionStateSlowStart:
 					slog.Info("网络监控，当前状态:探测可用带宽！")
@@ -130,7 +138,8 @@ func (t *NetStatusRecord) RecordEvent(evt qlogwriter.Event) {
 		} else {
 			t.tracer.DroppedRate = float64(drop*100) / float64(recv)
 		}
-		if t.tracer.control.IsShowStatus {
+		if t.tracer.control.ShowStatusLevel == StatusLevelAll || (t.tracer.control.ShowStatusLevel == StatusLevelLostPacket && (lost > 0 || drop > 0)) {
+
 			slog.Info("网络监控数据", slog.Any("当前流量(byte/RTT)", cwnd),
 				slog.Any("在途数据量(byte)", e.BytesInFlight), slog.Any("在途数据包数", e.PacketsInFlight),
 				slog.Any("最新往返时间(ms)", t.tracer.LastRTT), slog.Any("平滑往返时间(ms)", rttMs),
