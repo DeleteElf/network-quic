@@ -68,11 +68,11 @@ func (c *Client) Connect(address, heartMessage string) error {
 	}
 	c.Conn.SetCloseHandler(func(code int, text string) error {
 		c.Reason = fmt.Sprintf("{\"code\":%d,\"msg\":\"%s\"}", code, text)
-		c.Disconnect()
-		//todo：本来是考虑如果合理断开，就不能再连了,但是风险太高，明确需要是"被管理员强制下线"，才不再重连，除非重启
+		//todo：本来是考虑如果合理断开，就不能再连了,但是风险太高，明确需要是"disconnect by admin"，才不再重连，除非重启
 		if code == 1000 && text == "disconnect by admin" {
 			c.Reconnect = false
 		}
+		c.Disconnect()
 		return nil
 	})
 	go func() {
