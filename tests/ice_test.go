@@ -64,9 +64,9 @@ func TestIceServer(t *testing.T) {
 	}
 	ws.OnDisconnected = func(reason string) {
 		slog.Info("与服务端断开连接", slog.String("reason", reason))
-		if ws.Reconnect && !ws.IsClosed {
-			_ = ws.Connect(ws.Address, ws.HeartMessage)
-		}
+		//if ws.Reconnect && !ws.IsClosed {
+		//	_ = ws.Connect(ws.Address, ws.HeartMessage)
+		//}
 	}
 
 	// 1. 初始化 Server 实例并确保绑定端口/创建 NetConn
