@@ -126,7 +126,9 @@ func ClientConnect(channelCount C.int, config *C.NetworkData) C.int {
 	if config == nil {
 		return C.ErrorParam
 	}
-	jsonObject, err := utils.GetJsonObject(FromBytes(config))
+	cfg := FromBytes(config)
+	slog.Debug("客户端启动参数", slog.Any("config", cfg))
+	jsonObject, err := utils.GetJsonObject(cfg)
 	if err != nil {
 		return C.ErrorParam
 	}
@@ -180,7 +182,9 @@ func ClientConnect(channelCount C.int, config *C.NetworkData) C.int {
 		if jsonObject["fec"] != nil {
 			clientCtx.SupportFec = jsonObject["fec"].(bool)
 		}
-		if jsonObject["stun"] != nil && jsonObject["mgr_addr"] != nil && jsonObject["token"] != nil && jsonObject["dev_id"] != nil {
+		if jsonObject["stun"] != nil && len(jsonObject["stun"].(string)) > 0 &&
+			jsonObject["mgr_addr"] != nil && jsonObject["token"] != nil &&
+			jsonObject["dev_id"] != nil {
 			token := jsonObject["token"].(string)
 			url := fmt.Sprintf("%s/ice?device_id=%s",
 				jsonObject["mgr_addr"].(string), jsonObject["dev_id"].(string))
@@ -337,8 +341,9 @@ func ServerCreate(config *C.NetworkData) C.int {
 	if config == nil {
 		return C.ErrorParam
 	}
-
-	jsonObject, err := utils.GetJsonObject(FromBytes(config))
+	cfg := FromBytes(config)
+	slog.Debug("服务端启动参数", slog.Any("config", cfg))
+	jsonObject, err := utils.GetJsonObject(cfg)
 	if err != nil {
 		return C.ErrorParam
 	}
@@ -347,7 +352,7 @@ func ServerCreate(config *C.NetworkData) C.int {
 	if networkType != network.STREAM_NETWORK_UDP {
 		return C.ErrorParam
 	}
-	if jsonObject["stun"] != nil {
+	if jsonObject["stun"] != nil && len(jsonObject["stun"].(string)) > 0 {
 		serverCtx = server.NewServer(nil, false)
 		//serverCtx.Stun = []string{"stun:stun.l.google.com:19302"}
 		serverCtx.Stun = strings.Split(jsonObject["stun"].(string), ",")
@@ -360,7 +365,7 @@ func ServerCreate(config *C.NetworkData) C.int {
 		serverCtx = server.NewServerByAddress(address) //尝试连接本机服务
 	}
 	if jsonObject["fec"] != nil {
-		serverCtx.Config.EnableDatagrams = jsonObject["fec"].(bool)
+		serverCtx.SupportFec = jsonObject["fec"].(bool)
 	}
 	serverCtx.OnAcceptSocket = func(sock *network.Socket) {
 		socketMap[sock.Id] = sock
@@ -581,7 +586,9 @@ func ProxyServerCreate(config *C.NetworkData) C.int {
 	if config == nil {
 		return C.ErrorParam
 	}
-	jsonObject, err := utils.GetJsonObject(FromBytes(config))
+	cfg := FromBytes(config)
+	slog.Debug("代理启动参数", slog.Any("config", cfg))
+	jsonObject, err := utils.GetJsonObject(cfg)
 	if err != nil {
 		return C.ErrorParam
 	}
@@ -589,19 +596,18 @@ func ProxyServerCreate(config *C.NetworkData) C.int {
 	if data == nil {
 		return C.ErrorParam
 	}
+	if managerCtx != nil && !managerCtx.IsClosed {
+		return C.Success
+	}
 	url := fmt.Sprintf("%s/device?type=proxy&apikey=%s",
 		jsonObject["mgr_addr"].(string), jsonObject["apikey"].(string))
-	cfg := &agent.Config{
+	managerCtx = agent.NewManagePlatform(&agent.Config{
 		MgrAddr:  url,
 		Hearts:   50,
 		Data:     data,
 		Version:  "1",
 		SignSalt: "2fbbdf99eae1675484a48e8310db1ee42d3bd6fdbc5e3f3755af848b23cc9817",
-	}
-	if managerCtx != nil && !managerCtx.IsClosed {
-		return C.Success
-	}
-	managerCtx = agent.NewManagePlatform(cfg)
+	})
 	if managerCtx == nil {
 		return C.ErrorContext
 	}
