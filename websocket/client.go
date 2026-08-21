@@ -191,7 +191,7 @@ func (c *Client) Disconnect() {
 			if err != nil {
 				if reason["code"] != nil && reason["msg"] != nil {
 					//todo：本来是考虑如果合理断开，就不能再连了,但是风险太高，明确需要是"被管理员强制下线"，才不再重连，除非重启
-					if reason["code"].(int) == 0 && reason["msg"].(string) == "被管理员强制下线" {
+					if reason["code"].(int) == 0 && reason["msg"].(string) == "disconnect by admin" {
 						c.Reconnect = false
 					}
 				}
