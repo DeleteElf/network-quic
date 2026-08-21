@@ -55,6 +55,7 @@ func NewServer(conn net.PacketConn, isAgent bool) *Server {
 		isAgent: isAgent,
 		Sockets: make(map[string]*network.Socket),
 	}
+	svr.MtuPacketSize = network.NetMtuPacketSize
 	svr.NetConn = conn
 	svr.SetOnCloseHandler(svr)
 	return svr
@@ -99,7 +100,7 @@ func (s *Server) StartListen(onDisconnect network.SocketCallbackFunc) {
 			HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
 			MaxIdleTimeout:          10 * time.Second, // 默认30s
 			KeepAlivePeriod:         3 * time.Second,  // 建议是 MaxIdleTimeout 的一半，或者更小的值
-			InitialPacketSize:       1500,             //初始包大小
+			InitialPacketSize:       s.MtuPacketSize,  //初始包大小
 			DisablePathMTUDiscovery: false,            // 允许路径 MTU 探索
 			Allow0RTT:               true,
 			EnableDatagrams:         s.SupportFec, //允许直接传输udp
@@ -185,7 +186,7 @@ func (s *Server) processStream(quicConn *quic.Conn, stream *quic.Stream, onDisco
 	slog.Info("启动通道通讯", slog.Int("chn", info.ChannelIndex), slog.Any("streamId", streamId), slog.String("clientId", info.Id))
 	s.lock.Lock()
 	if s.Sockets[info.Id] == nil {
-		socket := network.NewSocket(info.Id, info.ChannelCount, func(sock *network.Socket) {
+		socket := network.NewSocket(info.Id, info.ChannelCount, s.MtuPacketSize, func(sock *network.Socket) {
 			if s.Sockets[sock.Id] != nil {
 				s.Sockets[sock.Id] = nil
 				delete(s.Sockets, sock.Id)
@@ -209,7 +210,7 @@ func (s *Server) processStream(quicConn *quic.Conn, stream *quic.Stream, onDisco
 		}
 	}
 	socket := s.Sockets[info.Id]
-	if s.SupportFec && s.QuicConfig.EnableDatagrams && socket.StreamChannels[info.ChannelIndex].Encoder == nil {
+	if s.SupportFec && s.QuicConfig.EnableDatagrams {
 		socket.StreamConfigs[info.ChannelIndex].Type = network.StreamType(info.Type)
 		socket.StreamConfigs[info.ChannelIndex].DataShards = info.DataShards
 		socket.StreamConfigs[info.ChannelIndex].ParityShards = info.ParityShards

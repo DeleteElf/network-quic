@@ -8,6 +8,7 @@ import (
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/quic-go/quic-go"
 	"log/slog"
+	"math"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -85,21 +86,24 @@ type Socket struct {
 	Id             string
 	StreamChannels []*StreamChannel
 	ChannelCount   int
+	MtuPacketSize  uint16
 	Context        context.Context
 	OnDisconnect   SocketCallbackFunc
 	Conn           *quic.Conn
 	framework.CloseableObject
 	StreamChannelOperating
-	channelEditLock sync.Mutex
-	StreamConfigs   []StreamConfig
-	PacketPool      *sync.Pool
+	channelEditLock    sync.Mutex
+	StreamConfigs      []StreamConfig
+	PacketPool         *sync.Pool
+	FecLimitPacketSize int
 }
 
-func NewSocket(id string, channelCount int, onDisconnect SocketCallbackFunc) *Socket {
+func NewSocket(id string, channelCount int, packetSize uint16, onDisconnect SocketCallbackFunc) *Socket {
 	sock := &Socket{
-		Id:           id,
-		ChannelCount: channelCount,
-		Context:      context.Background(),
+		Id:            id,
+		ChannelCount:  channelCount,
+		MtuPacketSize: packetSize,
+		Context:       context.Background(),
 	}
 	sock.IsClosed = false
 	sock.SetOnCloseHandler(sock)
@@ -152,7 +156,7 @@ func (s *Socket) CreateChannels() {
 	defer s.channelEditLock.Unlock()
 	s.StreamChannels = make([]*StreamChannel, s.ChannelCount) //创建通道列表切片
 	for i := 0; i < s.ChannelCount; i++ {
-		s.StreamChannels[i] = NewStreamChannel(s.Id, i, &s.StreamConfigs[i]) //make(chan StreamChannelData, 3) //创建通道实例
+		s.StreamChannels[i] = NewStreamChannel(s.Id, i) //make(chan StreamChannelData, 3) //创建通道实例
 		s.StreamChannels[i].OnDisconnect = func(id string, index int) {
 			if !s.IsClosed {
 				s.channelEditLock.Lock()
@@ -208,7 +212,8 @@ func (s *Socket) Send(channelId int, data []byte) (bool, error) {
 		return false, errors.New("通道未初始化！")
 	}
 	channel := s.StreamChannels[channelId]
-	if channel.Config.EnableFec && channel.Encoder != nil {
+	config := s.StreamConfigs[channelId]
+	if config.EnableFec && len(data) > s.FecLimitPacketSize {
 		frameIndex := atomic.AddUint64(&channel.FrameIndex, 1)
 		return s.SendFecDatagram(channelId, frameIndex, data)
 	} else {
@@ -302,10 +307,10 @@ func (s *Socket) HandleChannelStreamDatagram() {
 			if sc.Channel == nil {
 				return
 			}
-			if sc.Encoder == nil {
+			if s.StreamChannels[packet.ChannelId].NextGroupId == 0 {
 				for {
 					time.Sleep(time.Millisecond) //等待创建完成
-					if sc.Encoder != nil {
+					if s.StreamChannels[packet.ChannelId].NextGroupId != 0 {
 						break
 					}
 				}
@@ -320,40 +325,46 @@ func (s *Socket) HandleChannelStreamDatagram() {
 }
 
 func (s *Socket) InitFecParam(channelId int) error {
-	if s.StreamChannels[channelId].Config.EnableFec {
+	if s.StreamConfigs[channelId].EnableFec {
 		atomic.AddUint64(&s.StreamChannels[channelId].NextGroupId, 1)
 	}
-	return s.StreamChannels[channelId].BuildFecEncoder()
+	return nil // s.StreamChannels[channelId].BuildFecEncoder()
 }
 
 func (s *Socket) UpdateFecParam(channelId, dataShards, parityShards int) error {
-	if s.StreamChannels[channelId].Config.EnableFec && dataShards > 0 && parityShards > 0 {
-		s.StreamChannels[channelId].Config.DataShards = dataShards
-		s.StreamChannels[channelId].Config.ParityShards = parityShards
-		return s.StreamChannels[channelId].BuildFecEncoder()
+	if s.StreamConfigs[channelId].EnableFec && dataShards > 0 && parityShards > 0 {
+		s.StreamConfigs[channelId].DataShards = dataShards
+		s.StreamConfigs[channelId].ParityShards = parityShards
+		return nil
 	}
 	return nil
 }
 
 func (s *Socket) SendFecDatagram(channelId int, frameIndex uint64, data []byte) (bool, error) {
-	slog.Debug("待发送的未编码数据包", slog.Int("ChannelId", channelId), slog.Any("长度", len(data)))
-	total := len(data)
-	shards, err := s.StreamChannels[channelId].Encoder.Split(data)
+	//slog.Debug("待发送的未编码数据包", slog.Int("ChannelId", channelId), slog.Any("长度", len(data)))
+	total := len(data) //通过包的长度，动态计算分片，这里总是取上整！
+	targetDataShards := int(math.Ceil(float64(total) / float64(s.MtuPacketSize-FecPacketHeaderLength)))
+	targetParityShards := int(math.Ceil(float64(targetDataShards) / float64(s.StreamConfigs[channelId].DataShards) * float64(s.StreamConfigs[channelId].ParityShards)))
+	encoder, err := s.StreamChannels[channelId].GetFecEncoder(targetDataShards, targetParityShards)
 	if err != nil {
 		return false, err
 	}
-	err = s.StreamChannels[channelId].Encoder.Encode(shards)
+	shards, err := encoder.Split(data)
+	if err != nil {
+		return false, err
+	}
+	err = encoder.Encode(shards)
 	if err != nil {
 		slog.Debug("编码fec过程发生错误", slog.Int("channelId", channelId), slog.Any("err", err))
 		return false, err
 	}
 	for index, shard := range shards {
-		_ = s.sendFecShardDatagram(channelId, frameIndex, index, total, shard)
+		_ = s.sendFecShardDatagram(channelId, frameIndex, index, total, targetDataShards, targetParityShards, shard)
 	}
 	return true, nil
 }
 
-func (s *Socket) sendFecShardDatagram(channelId int, frameIndex uint64, index, total int, data []byte) error {
+func (s *Socket) sendFecShardDatagram(channelId int, frameIndex uint64, index, total, dataShards, parityShards int, data []byte) error {
 	length := len(data)
 	// 1. 从 Pool 获取一块已有的内存 (0 分配)
 	bufPtr := s.PacketPool.Get().(*[]byte)
@@ -363,8 +374,8 @@ func (s *Socket) sendFecShardDatagram(channelId int, frameIndex uint64, index, t
 	packet[0] = byte(channelId)
 	binary.BigEndian.PutUint64(packet[1:], frameIndex)
 	packet[9] = byte(index)
-	packet[10] = byte(s.StreamChannels[channelId].Config.DataShards) //todo:如果是动态编码，这里会变化，要特别注意
-	packet[11] = byte(s.StreamChannels[channelId].Config.ParityShards)
+	packet[10] = byte(dataShards)
+	packet[11] = byte(parityShards)
 	binary.BigEndian.PutUint32(packet[12:], uint32(total))
 	binary.BigEndian.PutUint16(packet[16:], uint16(length))
 	copy(packet[18:], data)

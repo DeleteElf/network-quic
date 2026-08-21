@@ -11,6 +11,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"io"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -43,18 +44,19 @@ type StreamChannelData struct {
 type MessageChannelCallbackFunc func(string, int)
 
 type StreamChannel struct {
-	Channel     chan StreamChannelData
-	ClientId    string
-	ChannelId   int
-	Cancel      context.CancelFunc
-	Done        bool
-	Buffer      *StreamChannelData
-	Stream      *quic.Stream
-	FrameIndex  uint64
-	Config      *StreamConfig
-	Encoder     reedsolomon.Encoder
-	FecGroups   map[uint64]*FECGroup
-	NextGroupId uint64
+	Channel       chan StreamChannelData
+	ClientId      string
+	ChannelId     int
+	Cancel        context.CancelFunc
+	Done          bool
+	Buffer        *StreamChannelData
+	Stream        *quic.Stream
+	FrameIndex    uint64
+	FecEncoders   map[string]reedsolomon.Encoder
+	FecGroups     map[uint64]*FECGroup
+	NextGroupId   uint64
+	lockEncoders  sync.Mutex
+	lockFecGroups sync.Mutex
 
 	OnConnect    MessageChannelCallbackFunc
 	OnDisconnect MessageChannelCallbackFunc
@@ -69,14 +71,14 @@ type StreamChannel struct {
 //	-param c:数据通道的配置
 //
 // return:通道实例
-func NewStreamChannel(id string, index int, c *StreamConfig) *StreamChannel {
-	slog.Debug("正在创建通道", slog.String("id", id), slog.Int("ChannelId", index), slog.Any("Config", c))
+func NewStreamChannel(id string, index int) *StreamChannel {
+	slog.Debug("正在创建通道", slog.String("id", id), slog.Int("ChannelId", index))
 	sc := &StreamChannel{
-		Channel:   make(chan StreamChannelData),
-		ClientId:  id,
-		ChannelId: index,
-		Config:    c,
-		FecGroups: make(map[uint64]*FECGroup), //初始化空的分组队列
+		Channel:     make(chan StreamChannelData),
+		ClientId:    id,
+		ChannelId:   index,
+		FecGroups:   make(map[uint64]*FECGroup), //初始化空的分组队列
+		FecEncoders: make(map[string]reedsolomon.Encoder),
 		CloseableObject: framework.CloseableObject{
 			IsClosed: false,
 		},
@@ -216,16 +218,20 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 		next, exists := sc.FecGroups[sc.NextGroupId]
 		if exists && next.Received >= next.DataShards {
 			// 关键优化：使用 ReconstructData 仅恢复数据分片，比 Reconstruct 省时省 CPU
-			err := sc.Encoder.ReconstructData(next.Shards)
+			encoder, err := sc.GetFecEncoder(next.DataShards, next.ParityShards)
 			if err != nil {
-				return fmt.Errorf("fec reconstruct failed: %w", err)
+				return fmt.Errorf("获取fec解码器出错: %w", err)
+			}
+			err = encoder.ReconstructData(next.Shards)
+			if err != nil {
+				return fmt.Errorf("fec解码出错: %w", err)
 			}
 			var frameBuf bytes.Buffer
-			err = sc.Encoder.Join(&frameBuf, next.Shards, next.Total)
+			err = encoder.Join(&frameBuf, next.Shards, next.Total)
 			if err != nil {
 				return err
 			}
-			slog.Debug("解码fec完成", slog.Int("groupId", int(next.GroupID)))
+			//slog.Debug("解码fec完成", slog.Int("groupId", int(next.GroupID)))
 			delete(sc.FecGroups, next.GroupID)
 			atomic.AddUint64(&sc.NextGroupId, 1)
 			if sc.Channel != nil {
@@ -241,15 +247,20 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 		}
 	}
 }
-func (sc *StreamChannel) BuildFecEncoder() error {
-	if sc.Config.EnableFec {
-		encoder, err := reedsolomon.New(sc.Config.DataShards, sc.Config.ParityShards) //todo:如果需要动态调整时，整理会进行实时修改，如何保证修改前和修改后的发送不会出错？
-		if err != nil {
-			return err
+
+func (sc *StreamChannel) GetFecEncoder(dataShards, parityShards int) (reedsolomon.Encoder, error) {
+	if dataShards > 0 && parityShards > 0 {
+		key := fmt.Sprintf("%d_%d", dataShards, parityShards)
+		sc.lockEncoders.Lock()
+		defer sc.lockEncoders.Unlock()
+		if sc.FecEncoders[key] == nil {
+			encoder, err := reedsolomon.New(dataShards, parityShards) //todo:如果需要动态调整时，整理会进行实时修改，如何保证修改前和修改后的发送不会出错？
+			if err != nil {
+				return nil, err
+			}
+			sc.FecEncoders[key] = encoder
 		}
-		sc.Encoder = encoder
-	} else {
-		sc.Encoder = nil
+		return sc.FecEncoders[key], nil
 	}
-	return nil
+	return nil, nil
 }

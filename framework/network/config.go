@@ -4,6 +4,12 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+const (
+	FecPacketHeaderLength = 18
+	FecLimitPacketSize    = 100
+	NetMtuPacketSize      = 1400
+)
+
 type StreamConfig struct {
 	Type         StreamType
 	EnableFec    bool
@@ -12,6 +18,7 @@ type StreamConfig struct {
 }
 
 type Config struct {
-	SupportFec bool
-	QuicConfig *quic.Config
+	SupportFec    bool
+	QuicConfig    *quic.Config
+	MtuPacketSize uint16
 }
