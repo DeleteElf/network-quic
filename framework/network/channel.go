@@ -11,6 +11,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"io"
 	"log/slog"
+	"sync/atomic"
 	"time"
 )
 
@@ -42,14 +43,14 @@ type StreamChannelData struct {
 type MessageChannelCallbackFunc func(string, int)
 
 type StreamChannel struct {
-	Channel   chan StreamChannelData
-	ClientId  string
-	ChannelId int
-	Cancel    context.CancelFunc
-	Done      bool
-	Buffer    *StreamChannelData
-	Stream    *quic.Stream
-
+	Channel     chan StreamChannelData
+	ClientId    string
+	ChannelId   int
+	Cancel      context.CancelFunc
+	Done        bool
+	Buffer      *StreamChannelData
+	Stream      *quic.Stream
+	FrameIndex  uint64
 	Config      *StreamConfig
 	Encoder     reedsolomon.Encoder
 	FecGroups   map[uint64]*FECGroup
@@ -183,7 +184,6 @@ func (sc *StreamChannel) Send(data []byte) (bool, error) {
 	if sc.IsClosed {
 		return false, nil
 	}
-
 	if sc.Stream == nil {
 		return false, nil
 	}
@@ -210,6 +210,7 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 		group.Shards[packet.ShardIdx] = packet.Payload
 		group.Received++
 	}
+	//slog.Debug("收到一个新的数据包", slog.Any("packet", packet), slog.Any("fecGroup", group))
 	// 4. 判定：如果不满足解包门槛，继续等待下一个包
 	for {
 		next, exists := sc.FecGroups[sc.NextGroupId]
@@ -224,9 +225,10 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 			if err != nil {
 				return err
 			}
+			slog.Debug("解码fec完成", slog.Int("groupId", int(next.GroupID)))
+			delete(sc.FecGroups, next.GroupID)
+			atomic.AddUint64(&sc.NextGroupId, 1)
 			if sc.Channel != nil {
-				delete(sc.FecGroups, next.GroupID)
-				sc.NextGroupId++
 				sc.Channel <- StreamChannelData{
 					ClientId:  sc.ClientId,
 					ChannelId: sc.ChannelId,

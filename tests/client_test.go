@@ -80,11 +80,12 @@ func TestClient(t *testing.T) {
 	slog.Info("正在向通道2发送数据", slog.String("msg", msg2))
 	_, _ = cli.Socket.Send(2, []byte(msg2))
 
-	_, _ = cli.Socket.Send(1, []byte("hello"))
-	slog.Info("正在向通道1发送数据", slog.String("msg", "hello"))
+	msg3 := "hello,如果数据太短，我们在fec模式下，就会报错，谨记！！！"
+	_, _ = cli.Socket.Send(1, []byte(msg3))
+	slog.Info("正在向通道1发送数据", slog.String("msg", msg3))
 	//time.Sleep(time.Second * 3) //等待3秒，等他们通讯完成再退出
 	for {
-		time.Sleep(time.Second * 3)
+		time.Sleep(time.Second * 6)
 		if cli.IsClosed || cli.Socket == nil || cli.Socket.IsClosed {
 			break
 		} else {

@@ -49,7 +49,7 @@ func messageHandler(svr *server.Server, sock *network.Socket, channelIndex int) 
 		msg := string(currentBuffer.Data)
 		slog.Debug("收到数据：", slog.Int("channelId", currentBuffer.ChannelId), slog.String("msg", msg),
 			slog.String("clientId", currentBuffer.ClientId))
-		if msg == "hello" {
+		if msg == "hello,如果数据太短，我们在fec模式下，就会报错，谨记！！！" {
 			template := "这是一条测试数据，我们需要用来测试一下 fec的功能是否正常，因此，我们会不断地评价它！！！"
 			stringList := make([]string, 10)
 			result := ""
@@ -60,11 +60,7 @@ func messageHandler(svr *server.Server, sock *network.Socket, channelIndex int) 
 				data := []byte(temp)
 				slog.Debug("正在向客户端发送fec数据包", slog.Int("channelId", currentBuffer.ChannelId),
 					slog.Int("数据长度:", len(data)), slog.String("msg", temp))
-				if svr.QuicConfig.EnableDatagrams && sock.StreamChannels[channelIndex].Encoder != nil {
-					err = sock.SendFecDatagram(channelIndex, int64(index), data)
-				} else {
-					_, err = sock.Send(channelIndex, data)
-				}
+				_, err = sock.Send(channelIndex, data)
 				if err != nil {
 					return
 				}
@@ -75,7 +71,7 @@ func messageHandler(svr *server.Server, sock *network.Socket, channelIndex int) 
 				slog.Debug("正在向客户端发送fec数据包", slog.Int("channelId", currentBuffer.ChannelId),
 					slog.Int("数据长度:", len(data)), slog.String("msg", temp))
 				if svr.QuicConfig.EnableDatagrams && sock.StreamChannels[channelIndex].Encoder != nil {
-					err = sock.SendFecDatagram(channelIndex, int64(i+10), data)
+					_, err = sock.SendFecDatagram(channelIndex, uint64(i+10), data) //这里我们模拟强制乱序，接收重组
 				} else {
 					_, err = sock.Send(channelIndex, data)
 				}

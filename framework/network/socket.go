@@ -10,7 +10,9 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 )
 
 // FECPacket Fec数据包,包头长度 12字节
@@ -205,7 +207,13 @@ func (s *Socket) Send(channelId int, data []byte) (bool, error) {
 	if len(s.StreamChannels) == 0 || s.StreamChannels[channelId] == nil {
 		return false, errors.New("通道未初始化！")
 	}
-	return s.StreamChannels[channelId].Send(data)
+	channel := s.StreamChannels[channelId]
+	if channel.Config.EnableFec && channel.Encoder != nil {
+		frameIndex := atomic.AddUint64(&channel.FrameIndex, 1)
+		return s.SendFecDatagram(channelId, frameIndex, data)
+	} else {
+		return channel.Send(data)
+	}
 }
 
 func (s *Socket) Ping(channelId int) (bool, error) {
@@ -294,6 +302,14 @@ func (s *Socket) HandleChannelStreamDatagram() {
 			if sc.Channel == nil {
 				return
 			}
+			if sc.Encoder == nil {
+				for {
+					time.Sleep(time.Millisecond) //等待创建完成
+					if sc.Encoder != nil {
+						break
+					}
+				}
+			}
 			err = sc.FecDecode(packet)
 			if err != nil {
 				slog.Error("解码fec过程发生错误", slog.Any("err", err))
@@ -304,6 +320,9 @@ func (s *Socket) HandleChannelStreamDatagram() {
 }
 
 func (s *Socket) InitFecParam(channelId int) error {
+	if s.StreamChannels[channelId].Config.EnableFec {
+		atomic.AddUint64(&s.StreamChannels[channelId].NextGroupId, 1)
+	}
 	return s.StreamChannels[channelId].BuildFecEncoder()
 }
 
@@ -316,25 +335,25 @@ func (s *Socket) UpdateFecParam(channelId, dataShards, parityShards int) error {
 	return nil
 }
 
-func (s *Socket) SendFecDatagram(channelId int, frameIndex int64, data []byte) error {
+func (s *Socket) SendFecDatagram(channelId int, frameIndex uint64, data []byte) (bool, error) {
 	slog.Debug("待发送的未编码数据包", slog.Int("ChannelId", channelId), slog.Any("长度", len(data)))
 	total := len(data)
 	shards, err := s.StreamChannels[channelId].Encoder.Split(data)
 	if err != nil {
-		return err
+		return false, err
 	}
 	err = s.StreamChannels[channelId].Encoder.Encode(shards)
 	if err != nil {
 		slog.Debug("编码fec过程发生错误", slog.Int("channelId", channelId), slog.Any("err", err))
-		return err
+		return false, err
 	}
 	for index, shard := range shards {
 		_ = s.sendFecShardDatagram(channelId, frameIndex, index, total, shard)
 	}
-	return nil
+	return true, nil
 }
 
-func (s *Socket) sendFecShardDatagram(channelId int, frameIndex int64, index, total int, data []byte) error {
+func (s *Socket) sendFecShardDatagram(channelId int, frameIndex uint64, index, total int, data []byte) error {
 	length := len(data)
 	// 1. 从 Pool 获取一块已有的内存 (0 分配)
 	bufPtr := s.PacketPool.Get().(*[]byte)
@@ -342,7 +361,7 @@ func (s *Socket) sendFecShardDatagram(channelId int, frameIndex int64, index, to
 	//  1. 检查 FEC Header 最小长度 (1 + 8 + 1 + 1 + 1 + 2 = 14 字节)
 	packet := (*bufPtr)[:18+length]
 	packet[0] = byte(channelId)
-	binary.BigEndian.PutUint64(packet[1:], uint64(frameIndex))
+	binary.BigEndian.PutUint64(packet[1:], frameIndex)
 	packet[9] = byte(index)
 	packet[10] = byte(s.StreamChannels[channelId].Config.DataShards) //todo:如果是动态编码，这里会变化，要特别注意
 	packet[11] = byte(s.StreamChannels[channelId].Config.ParityShards)
