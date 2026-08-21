@@ -24,18 +24,17 @@ type Stream struct {
 }
 
 type Server struct {
-	isAgent    bool
-	listener   *quic.Listener
-	Sockets    map[string]*network.Socket
-	NetConn    net.PacketConn
-	QuicConn   *quic.Conn
-	Config     *quic.Config
-	lock       sync.Mutex
-	SupportFec bool
+	isAgent  bool
+	listener *quic.Listener
+	Sockets  map[string]*network.Socket
+	NetConn  net.PacketConn
+	QuicConn *quic.Conn
+	lock     sync.Mutex
 
 	OnAcceptSocket       network.SocketCallbackFunc
 	OnSocketDisConnected network.SocketCallbackFunc
 
+	network.Config
 	ice.IceWorker
 	framework.CloseableObject
 }
@@ -53,12 +52,10 @@ func NewServerByAddress(address string) *Server {
 // NewServer 创建新的服务实例
 func NewServer(conn net.PacketConn, isAgent bool) *Server {
 	svr := &Server{
-		isAgent:    isAgent,
-		Sockets:    make(map[string]*network.Socket),
-		SupportFec: false,
+		isAgent: isAgent,
+		Sockets: make(map[string]*network.Socket),
 	}
 	svr.NetConn = conn
-	svr.IsClosed = false
 	svr.SetOnCloseHandler(svr)
 	return svr
 }
@@ -92,12 +89,12 @@ func (s *Server) ConnectByIce(conn net.PacketConn) {
 
 func (s *Server) StartListen(onDisconnect network.SocketCallbackFunc) {
 	tlsConfig := utils.GenTLSConfig()
-	if s.Config == nil {
+	if s.QuicConfig == nil {
 		ctrl := &network.NetStatusControl{ShowStatusLevel: network.StatusLevelLostPacket}
 		ctrl.OnCongestionStateChanged = func(tracer *network.NetStatusTracer) {
 			slog.Debug("探测到网络状态发生变化")
 		}
-		s.Config = &quic.Config{
+		s.QuicConfig = &quic.Config{
 			// MaxIncomingStreams: 0xffffffffffff, // 最大默认stream输入，默认100
 			HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
 			MaxIdleTimeout:          10 * time.Second, // 默认30s
@@ -116,7 +113,7 @@ func (s *Server) StartListen(onDisconnect network.SocketCallbackFunc) {
 		Conn: s.NetConn,
 	}
 	var err error
-	s.listener, err = tr.Listen(tlsConfig, s.Config)
+	s.listener, err = tr.Listen(tlsConfig, s.QuicConfig)
 
 	//s.listener, err = quic.Listen(s.NetConn, tlsConfig, quicConfig)
 	if err != nil {
@@ -180,15 +177,15 @@ func (s *Server) processStream(quicConn *quic.Conn, stream *quic.Stream, onDisco
 		_ = network.CloseStream(stream)
 		return
 	}
-	if info.Index < 0 || info.Index >= MaxStreamCount {
-		slog.Error("无效的通道", slog.Int("chn", info.Index))
+	if info.ChannelIndex < 0 || info.ChannelIndex >= MaxStreamCount {
+		slog.Error("无效的通道", slog.Int("chn", info.ChannelIndex))
 		_ = network.CloseStream(stream)
 		return
 	}
-	slog.Info("启动通道通讯", slog.Int("chn", info.Index), slog.Any("streamId", streamId), slog.String("clientId", info.Id))
+	slog.Info("启动通道通讯", slog.Int("chn", info.ChannelIndex), slog.Any("streamId", streamId), slog.String("clientId", info.Id))
 	s.lock.Lock()
 	if s.Sockets[info.Id] == nil {
-		socket := network.NewSocket(info.Id, info.Count, func(sock *network.Socket) {
+		socket := network.NewSocket(info.Id, info.ChannelCount, func(sock *network.Socket) {
 			if s.Sockets[sock.Id] != nil {
 				s.Sockets[sock.Id] = nil
 				delete(s.Sockets, sock.Id)
@@ -197,24 +194,35 @@ func (s *Server) processStream(quicConn *quic.Conn, stream *quic.Stream, onDisco
 				onDisconnect(sock)
 			}
 		})
+		socket.StreamConfigs = make([]network.StreamConfig, info.ChannelCount) //先创立基础通道，详细信息，等实际接入在获取
+		socket.CreateChannels()
 		socket.Conn = quicConn
 		s.Sockets[info.Id] = socket
 		if s.OnAcceptSocket != nil {
 			s.OnAcceptSocket(socket)
 		}
-		if s.Config.EnableDatagrams {
+		if s.QuicConfig.EnableDatagrams {
 			if socket.PacketPool == nil {
-				socket.PacketPool = socket.CreatePacketPool(s.Config.InitialPacketSize)
+				socket.PacketPool = socket.CreatePacketPool(s.QuicConfig.InitialPacketSize)
 			}
 			go socket.HandleChannelStreamDatagram()
 		}
 	}
-	if s.Config.EnableDatagrams && s.Sockets[info.Id].StreamChannels[info.Index].Encoder == nil {
-		s.Sockets[info.Id].SetFecParam(info.Index, info.DataShards, info.ParityShards)
+	socket := s.Sockets[info.Id]
+	if s.SupportFec && s.QuicConfig.EnableDatagrams && socket.StreamChannels[info.ChannelIndex].Encoder == nil {
+		socket.StreamConfigs[info.ChannelIndex].Type = network.StreamType(info.Type)
+		socket.StreamConfigs[info.ChannelIndex].DataShards = info.DataShards
+		socket.StreamConfigs[info.ChannelIndex].ParityShards = info.ParityShards
+		if socket.StreamConfigs[info.ChannelIndex].Type != network.Control {
+			socket.StreamConfigs[info.ChannelIndex].EnableFec = true
+		}
+		err = socket.InitFecParam(info.ChannelIndex)
 	}
 	s.lock.Unlock()
-	socket := s.Sockets[info.Id]
-	go socket.HandleChannelStreamData(info.Index, stream)
+	if err != nil {
+		return
+	}
+	go socket.HandleChannelStreamData(info.ChannelIndex, stream)
 }
 func (s *Server) CloseSocket(id string) error {
 	s.lock.Lock()

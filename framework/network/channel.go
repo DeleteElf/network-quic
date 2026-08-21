@@ -50,12 +50,10 @@ type StreamChannel struct {
 	Buffer    *StreamChannelData
 	Stream    *quic.Stream
 
-	Type         StreamType
-	Encoder      reedsolomon.Encoder
-	FecGroups    map[uint64]*FECGroup
-	DataShards   int
-	ParityShards int
-	NextGroupId  uint64
+	Config      *StreamConfig
+	Encoder     reedsolomon.Encoder
+	FecGroups   map[uint64]*FECGroup
+	NextGroupId uint64
 
 	OnConnect    MessageChannelCallbackFunc
 	OnDisconnect MessageChannelCallbackFunc
@@ -63,17 +61,20 @@ type StreamChannel struct {
 	framework.CloseableObject
 }
 
-// NewStreamChannelType 创新数据通道，并确定传输类型
-// id 数据通道的编号
-// index 数据通道的索引
-// _type 数据通道的类型
-func NewStreamChannelType(id string, index int, t StreamType) *StreamChannel {
-	slog.Debug("正在创建通道", slog.String("id", id), slog.Int("ChannelId", index), slog.Any("Type", t))
+// NewStreamChannel 创新数据通道，并确定传输类型
+//
+//	-param id:数据通道的编号
+//	-param index:数据通道的索引
+//	-param c:数据通道的配置
+//
+// return:通道实例
+func NewStreamChannel(id string, index int, c *StreamConfig) *StreamChannel {
+	slog.Debug("正在创建通道", slog.String("id", id), slog.Int("ChannelId", index), slog.Any("Config", c))
 	sc := &StreamChannel{
 		Channel:   make(chan StreamChannelData),
 		ClientId:  id,
 		ChannelId: index,
-		Type:      t,
+		Config:    c,
 		FecGroups: make(map[uint64]*FECGroup), //初始化空的分组队列
 		CloseableObject: framework.CloseableObject{
 			IsClosed: false,
@@ -81,10 +82,6 @@ func NewStreamChannelType(id string, index int, t StreamType) *StreamChannel {
 	}
 	sc.SetOnCloseHandler(sc)
 	return sc
-}
-
-func NewStreamChannel(id string, index int) *StreamChannel {
-	return NewStreamChannelType(id, index, StreamType(index))
 }
 
 func (sc *StreamChannel) OnClosing() bool {
@@ -241,4 +238,16 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 			return nil
 		}
 	}
+}
+func (sc *StreamChannel) BuildFecEncoder() error {
+	if sc.Config.EnableFec {
+		encoder, err := reedsolomon.New(sc.Config.DataShards, sc.Config.ParityShards) //todo:如果需要动态调整时，整理会进行实时修改，如何保证修改前和修改后的发送不会出错？
+		if err != nil {
+			return err
+		}
+		sc.Encoder = encoder
+	} else {
+		sc.Encoder = nil
+	}
+	return nil
 }

@@ -43,8 +43,8 @@ type StreamInfo struct {
 	DataShards   int `json:"d"`
 	ParityShards int `json:"p"`
 
-	Index int `json:"i"`
-	Count int `json:"c"`
+	ChannelIndex int `json:"i"`
+	ChannelCount int `json:"c"`
 }
 
 var ss = map[string]string{

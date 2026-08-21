@@ -60,7 +60,7 @@ func messageHandler(svr *server.Server, sock *network.Socket, channelIndex int) 
 				data := []byte(temp)
 				slog.Debug("正在向客户端发送fec数据包", slog.Int("channelId", currentBuffer.ChannelId),
 					slog.Int("数据长度:", len(data)), slog.String("msg", temp))
-				if svr.Config.EnableDatagrams && sock.StreamChannels[channelIndex].Encoder != nil {
+				if svr.QuicConfig.EnableDatagrams && sock.StreamChannels[channelIndex].Encoder != nil {
 					err = sock.SendFecDatagram(channelIndex, int64(index), data)
 				} else {
 					_, err = sock.Send(channelIndex, data)
@@ -74,7 +74,7 @@ func messageHandler(svr *server.Server, sock *network.Socket, channelIndex int) 
 				data := []byte(temp)
 				slog.Debug("正在向客户端发送fec数据包", slog.Int("channelId", currentBuffer.ChannelId),
 					slog.Int("数据长度:", len(data)), slog.String("msg", temp))
-				if svr.Config.EnableDatagrams && sock.StreamChannels[channelIndex].Encoder != nil {
+				if svr.QuicConfig.EnableDatagrams && sock.StreamChannels[channelIndex].Encoder != nil {
 					err = sock.SendFecDatagram(channelIndex, int64(i+10), data)
 				} else {
 					_, err = sock.Send(channelIndex, data)
@@ -110,6 +110,7 @@ var testServer *server.Server
 func TestServer(t *testing.T) {
 	utils.InitLog(slog.LevelDebug, nil)                     //初始化日志
 	testServer = server.NewServerByAddress("0.0.0.0:10001") //尝试连接本机服务
+	testServer.SupportFec = true
 	for {
 		if restart {
 			time.Sleep(1 * time.Second)
@@ -120,7 +121,7 @@ func TestServer(t *testing.T) {
 			slog.Debug("新的客户端接入：", slog.String("id", sock.Id))
 			go socketHandler(testServer, sock)
 		}
-		testServer.Config = &quic.Config{
+		testServer.QuicConfig = &quic.Config{
 			// MaxIncomingStreams: 0xffffffffffff, // 最大默认stream输入，默认100
 			HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
 			MaxIdleTimeout:          10 * time.Second, // 默认30s
@@ -128,7 +129,7 @@ func TestServer(t *testing.T) {
 			InitialPacketSize:       1400,             //初始包大小
 			DisablePathMTUDiscovery: false,            // 允许路径 MTU 探索
 			Allow0RTT:               true,
-			EnableDatagrams:         true, //允许直接传输udp
+			EnableDatagrams:         testServer.SupportFec, //允许直接传输udp
 			Tracer:                  qlog.DefaultConnectionTracer,
 		}
 		testServer.StartListen(func(sock *network.Socket) {

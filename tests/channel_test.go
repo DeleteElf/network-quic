@@ -19,7 +19,7 @@ func TestStreamChannel(t *testing.T) {
 	channels = make([]*network.StreamChannel, channelCount)
 	fmt.Println("开始创建通道")
 	for i := 0; i < 3; i++ {
-		channels[i] = network.NewStreamChannel("test001", i) // make(streams.StreamChannel)
+		channels[i] = network.NewStreamChannel("test001", i, &network.StreamConfig{}) // make(streams.StreamChannel)
 	}
 	if channels[0].Channel != nil {
 		fmt.Println("通道校验成功")

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"github.com/DeleteElf/zero-net/framework"
 	"github.com/DeleteElf/zero-net/framework/utils"
-	"github.com/klauspost/reedsolomon"
 	"github.com/quic-go/quic-go"
 	"log/slog"
 	"net"
@@ -57,11 +56,7 @@ func NewUdpSocketClient() (*net.UDPConn, error) {
 func NewUdpSocketServer(addr string) (net.PacketConn, error) {
 	config := net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
-			err := c.Control(func(fd uintptr) {
-				//utils.SetsockoptInt(fd, syscall.SOL_SOCKET, unix.SO_REUSEPORT, 1)
-				utils.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
-			})
-			return err
+			return c.Control(func(fd uintptr) { utils.SetSocketReuse(fd) })
 		},
 	}
 	config.SetMultipathTCP(false)
@@ -94,8 +89,8 @@ type Socket struct {
 	framework.CloseableObject
 	StreamChannelOperating
 	channelEditLock sync.Mutex
-
-	PacketPool *sync.Pool
+	StreamConfigs   []StreamConfig
+	PacketPool      *sync.Pool
 }
 
 func NewSocket(id string, channelCount int, onDisconnect SocketCallbackFunc) *Socket {
@@ -107,14 +102,13 @@ func NewSocket(id string, channelCount int, onDisconnect SocketCallbackFunc) *So
 	sock.IsClosed = false
 	sock.SetOnCloseHandler(sock)
 	sock.OnDisconnect = onDisconnect
-	sock.CreateChannels(channelCount)
 	return sock
 }
 func (s *Socket) CloseChannel(channelIndex int) bool {
 	s.channelEditLock.Lock()
 	defer s.channelEditLock.Unlock()
 	if len(s.StreamChannels) > channelIndex && s.StreamChannels[channelIndex] != nil {
-		s.StreamChannels[channelIndex].Close()
+		_ = s.StreamChannels[channelIndex].Close()
 		s.StreamChannels[channelIndex] = nil
 		return true
 	}
@@ -126,7 +120,7 @@ func (s *Socket) OnClosing() bool {
 	defer s.channelEditLock.Unlock()
 	for i := 0; i < len(s.StreamChannels); i++ {
 		if s.StreamChannels[i] != nil {
-			s.StreamChannels[i].Close()
+			_ = s.StreamChannels[i].Close()
 			s.StreamChannels[i] = nil
 		}
 	}
@@ -147,17 +141,21 @@ func (s *Socket) OnClosed() error {
 }
 
 // CreateChannels 创建通道
-func (s *Socket) CreateChannels(count int) {
+func (s *Socket) CreateChannels() {
+	if s.StreamConfigs == nil {
+		slog.Error("请先设置每个流的配置！")
+		return
+	}
 	s.channelEditLock.Lock()
 	defer s.channelEditLock.Unlock()
-	s.StreamChannels = make([]*StreamChannel, count) //创建通道列表切片
-	for i := 0; i < count; i++ {
-		s.StreamChannels[i] = NewStreamChannel(s.Id, i) //make(chan StreamChannelData, 3) //创建通道实例
+	s.StreamChannels = make([]*StreamChannel, s.ChannelCount) //创建通道列表切片
+	for i := 0; i < s.ChannelCount; i++ {
+		s.StreamChannels[i] = NewStreamChannel(s.Id, i, &s.StreamConfigs[i]) //make(chan StreamChannelData, 3) //创建通道实例
 		s.StreamChannels[i].OnDisconnect = func(id string, index int) {
 			if !s.IsClosed {
 				s.channelEditLock.Lock()
 				if index < len(s.StreamChannels) && s.StreamChannels[index] != nil {
-					s.StreamChannels[index].Close()
+					_ = s.StreamChannels[index].Close()
 					s.StreamChannels[index] = nil
 				}
 				s.channelEditLock.Unlock()
@@ -171,13 +169,12 @@ func (s *Socket) CreateChannels(count int) {
 					}
 					if !finded {
 						slog.Debug("socket的通道已全部断开连接！")
-						s.Close()
+						_ = s.Close()
 					}
 				}
 			}
 		}
 	}
-	s.ChannelCount = count
 }
 
 // HandleChannelStreamData 从通道接收流的数据
@@ -306,15 +303,17 @@ func (s *Socket) HandleChannelStreamDatagram() {
 	}
 }
 
-func (s *Socket) SetFecParam(channelId, dataShards, parityShards int) {
-	if dataShards > 0 && parityShards > 0 {
-		encoder, err := reedsolomon.New(dataShards, parityShards)
-		if err == nil {
-			s.StreamChannels[channelId].Encoder = encoder
-			s.StreamChannels[channelId].DataShards = dataShards
-			s.StreamChannels[channelId].ParityShards = parityShards
-		}
+func (s *Socket) InitFecParam(channelId int) error {
+	return s.StreamChannels[channelId].BuildFecEncoder()
+}
+
+func (s *Socket) UpdateFecParam(channelId, dataShards, parityShards int) error {
+	if s.StreamChannels[channelId].Config.EnableFec && dataShards > 0 && parityShards > 0 {
+		s.StreamChannels[channelId].Config.DataShards = dataShards
+		s.StreamChannels[channelId].Config.ParityShards = parityShards
+		return s.StreamChannels[channelId].BuildFecEncoder()
 	}
+	return nil
 }
 
 func (s *Socket) SendFecDatagram(channelId int, frameIndex int64, data []byte) error {
@@ -345,8 +344,8 @@ func (s *Socket) sendFecShardDatagram(channelId int, frameIndex int64, index, to
 	packet[0] = byte(channelId)
 	binary.BigEndian.PutUint64(packet[1:], uint64(frameIndex))
 	packet[9] = byte(index)
-	packet[10] = byte(s.StreamChannels[channelId].DataShards)
-	packet[11] = byte(s.StreamChannels[channelId].ParityShards)
+	packet[10] = byte(s.StreamChannels[channelId].Config.DataShards) //todo:如果是动态编码，这里会变化，要特别注意
+	packet[11] = byte(s.StreamChannels[channelId].Config.ParityShards)
 	binary.BigEndian.PutUint32(packet[12:], uint32(total))
 	binary.BigEndian.PutUint16(packet[16:], uint16(length))
 	copy(packet[18:], data)

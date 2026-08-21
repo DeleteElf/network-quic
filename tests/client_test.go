@@ -46,7 +46,8 @@ func receiveHandler(cli *client.Client, channelIndex int) {
 func TestClient(t *testing.T) {
 	utils.InitLog(slog.LevelDebug, nil)                       //初始化日志
 	cli := client.NewClient("192.168.199.22:10001", "test01") //尝试连接本机服务
-	cli.Config = &quic.Config{
+	cli.SupportFec = true
+	cli.QuicConfig = &quic.Config{
 		//MaxIncomingStreams:      0xffffffffffff,   // 最大默认stream输入，默认100
 		HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
 		MaxIdleTimeout:          10 * time.Second, // 默认30s，我们这边设置成10秒
@@ -54,9 +55,10 @@ func TestClient(t *testing.T) {
 		InitialPacketSize:       1400,             //当前最大数据包一个基础包的大小
 		DisablePathMTUDiscovery: false,
 		Allow0RTT:               true,
-		EnableDatagrams:         true,
+		EnableDatagrams:         cli.SupportFec,
 		Tracer:                  qlog.DefaultConnectionTracer,
 	}
+
 	err := cli.Connect(3, network.STREAM_NETWORK_UDP, func(sock *network.Socket) {
 		slog.Debug("socket已经断开===》！", slog.String("clientId", sock.Id))
 	}) //创建udp网络
