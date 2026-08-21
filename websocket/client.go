@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/DeleteElf/zero-net/framework"
 	"github.com/DeleteElf/zero-net/framework/utils"
+	"github.com/deleteelf/goframework/utils/jsonhelper"
 	"github.com/gorilla/websocket"
 	"log/slog"
 	"time"
@@ -186,6 +187,15 @@ func (c *Client) Disconnect() {
 		slog.Debug("正在断开websocket连接...")
 		if c.OnDisconnected != nil {
 			c.OnDisconnected(c.Reason)
+			reason, err := jsonhelper.GetJsonObject([]byte(c.Reason))
+			if err != nil {
+				if reason["code"] != nil && reason["msg"] != nil {
+					//todo：本来是考虑如果合理断开，就不能再连了,但是风险太高，明确需要是"被管理员强制下线"，才不再重连，除非重启
+					if reason["code"].(int) == 0 && reason["msg"].(string) == "被管理员强制下线" {
+						c.Reconnect = false
+					}
+				}
+			}
 			c.Reason = ""
 		}
 		if c.heartTicker != nil {
