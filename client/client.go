@@ -199,13 +199,18 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 	return nil
 }
 
-func (cli *Client) Send(channleId int, data []byte) (bool, error) {
+func (cli *Client) Send(channelId int, data []byte) (bool, error) {
+	return cli.SendWithIdr(channelId, false, data)
+
+}
+
+func (cli *Client) SendWithIdr(channelId int, idr bool, data []byte) (bool, error) {
 	if cli.IsClosed {
 		return false, errors.New("client is closed")
 	}
 	if cli.Socket == nil {
 		return false, errors.New("socket is null")
 	}
-	return cli.Socket.Send(channleId, data)
+	return cli.Socket.SendWithIdr(channelId, idr, data)
 
 }

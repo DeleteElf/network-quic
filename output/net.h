@@ -125,14 +125,14 @@ int SetOnDisConnectedCallback(MessageCallback callback);
 int ClientClose(void);
 int ClientConnect(int channelCount, NetworkData* config);
 int ClientChannelReceive(int chnIdx, NetworkData* data);
-int ClientChannelSend(int chnIdx, NetworkData* data);
+int ClientChannelSend(int chnIdx, int idr, NetworkData* data);
 int ClientChannelClose(int chnIdx);
 
 int ServerCreate(NetworkData* config);
 int ServerClose(void);
 int ServerStartListen(void);
 int ServerSocketClose(char* clientId);
-int ServerSocketSend(char* clientId, int chnIdx, NetworkData* data);
+int ServerSocketSend(char* clientId, int chnIdx,int idr, NetworkData* data);
 int ServerSocketReceive(ClientData* data);
 int ServerSocketChannelReceive(char* clientId, int chnIdx, NetworkData* data);
 

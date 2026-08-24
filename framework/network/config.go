@@ -5,7 +5,7 @@ import (
 )
 
 const (
-	FecPacketHeaderLength = 18
+	FecPacketHeaderLength = 19
 	FecLimitPacketSize    = 100
 	NetMtuPacketSize      = 1400
 )
