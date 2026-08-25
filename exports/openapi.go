@@ -366,6 +366,16 @@ func ServerCreate(config *C.NetworkData) C.int {
 	}
 	if jsonObject["fec"] != nil {
 		serverCtx.SupportFec = jsonObject["fec"].(bool)
+		if jsonObject["fec_bs"] != nil {
+			serverCtx.FecBlockSize = jsonObject["fec_bs"].(int)
+			serverCtx.QuicConfig.InitialPacketSize = uint16(serverCtx.FecBlockSize)
+		}
+		//if jsonObject["fec_per"] != nil {
+		//	serverCtx.FecPercentage = jsonObject["fec_per"].(int)
+		//}
+		if jsonObject["fec_min_pkts"] != nil {
+			serverCtx.FecMinRequiredPackets = jsonObject["fec_min_pkts"].(int)
+		}
 	}
 	serverCtx.OnAcceptSocket = func(sock *network.Socket) {
 		socketMap[sock.Id] = sock

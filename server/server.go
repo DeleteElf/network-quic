@@ -55,7 +55,9 @@ func NewServer(conn net.PacketConn, isAgent bool) *Server {
 		isAgent: isAgent,
 		Sockets: make(map[string]*network.Socket),
 	}
-	svr.MtuPacketSize = network.NetMtuPacketSize
+	svr.FecBlockSize = network.NetMtuPacketSize
+	//svr.FecPercentage = 30
+	//svr.MinRequiredFecPackets = 2
 	svr.NetConn = conn
 	svr.SetOnCloseHandler(svr)
 	return svr
@@ -97,11 +99,11 @@ func (s *Server) StartListen(onDisconnect network.SocketCallbackFunc) {
 		}
 		s.QuicConfig = &quic.Config{
 			// MaxIncomingStreams: 0xffffffffffff, // 最大默认stream输入，默认100
-			HandshakeIdleTimeout:    5 * time.Second,  // 默认5s
-			MaxIdleTimeout:          10 * time.Second, // 默认30s
-			KeepAlivePeriod:         3 * time.Second,  // 建议是 MaxIdleTimeout 的一半，或者更小的值
-			InitialPacketSize:       s.MtuPacketSize,  //初始包大小
-			DisablePathMTUDiscovery: false,            // 允许路径 MTU 探索
+			HandshakeIdleTimeout:    5 * time.Second,          // 默认5s
+			MaxIdleTimeout:          10 * time.Second,         // 默认30s
+			KeepAlivePeriod:         3 * time.Second,          // 建议是 MaxIdleTimeout 的一半，或者更小的值
+			InitialPacketSize:       network.NetMtuPacketSize, //初始包大小
+			DisablePathMTUDiscovery: false,                    // 允许路径 MTU 探索
 			Allow0RTT:               true,
 			EnableDatagrams:         s.SupportFec, //允许直接传输udp
 			Tracer: func(ctx context.Context, isClient bool, connID quic.ConnectionID) qlogwriter.Trace {
@@ -186,7 +188,7 @@ func (s *Server) processStream(quicConn *quic.Conn, stream *quic.Stream, onDisco
 	slog.Info("启动通道通讯", slog.Int("chn", info.ChannelIndex), slog.Any("streamId", streamId), slog.String("clientId", info.Id))
 	s.lock.Lock()
 	if s.Sockets[info.Id] == nil {
-		socket := network.NewSocket(info.Id, info.ChannelCount, s.MtuPacketSize, func(sock *network.Socket) {
+		socket := network.NewSocket(info.Id, info.ChannelCount, s.QuicConfig.InitialPacketSize, func(sock *network.Socket) {
 			if s.Sockets[sock.Id] != nil {
 				s.Sockets[sock.Id] = nil
 				delete(s.Sockets, sock.Id)
@@ -212,10 +214,19 @@ func (s *Server) processStream(quicConn *quic.Conn, stream *quic.Stream, onDisco
 	socket := s.Sockets[info.Id]
 	if s.SupportFec && s.QuicConfig.EnableDatagrams {
 		socket.StreamConfigs[info.ChannelIndex].Type = network.StreamType(info.Type)
-		socket.StreamConfigs[info.ChannelIndex].DataShards = info.DataShards
-		socket.StreamConfigs[info.ChannelIndex].ParityShards = info.ParityShards
 		if socket.StreamConfigs[info.ChannelIndex].Type != network.Control {
 			socket.StreamConfigs[info.ChannelIndex].EnableFec = true
+			switch socket.StreamConfigs[info.ChannelIndex].Type {
+			case network.Audio: //音频，我们按固定50%来控制
+				socket.StreamConfigs[info.ChannelIndex].DataShards = 4
+				socket.StreamConfigs[info.ChannelIndex].ParityShards = 2
+			case network.Video: //todo：这个要从上层配置的fec百分比来，这里暂时写死
+				socket.StreamConfigs[info.ChannelIndex].DataShards = 10
+				socket.StreamConfigs[info.ChannelIndex].ParityShards = 3
+				break
+			default:
+				break
+			}
 		}
 		err = socket.InitFecParam(info.ChannelIndex)
 	}
@@ -229,7 +240,7 @@ func (s *Server) CloseSocket(id string) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	if s.Sockets[id] != nil {
-		s.Sockets[id].Close()
+		_ = s.Sockets[id].Close()
 		s.Sockets[id] = nil
 		delete(s.Sockets, id)
 	}

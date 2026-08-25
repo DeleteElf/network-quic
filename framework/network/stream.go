@@ -39,10 +39,7 @@ type StreamInfo struct {
 	Type    int    `json:"type"`
 	Ts      int64  `json:"t"` // 用法见 ValidateStreamInfo
 	Sign    string `json:"s"` // 客户端的签名，用于服务端校验客户端的合法性
-
-	DataShards   int `json:"d"`
-	ParityShards int `json:"p"`
-
+	
 	ChannelIndex int `json:"i"`
 	ChannelCount int `json:"c"`
 }

@@ -119,11 +119,11 @@ func TestServer(t *testing.T) {
 		}
 		testServer.QuicConfig = &quic.Config{
 			// MaxIncomingStreams: 0xffffffffffff, // 最大默认stream输入，默认100
-			HandshakeIdleTimeout:    5 * time.Second,          // 默认5s
-			MaxIdleTimeout:          10 * time.Second,         // 默认30s
-			KeepAlivePeriod:         3 * time.Second,          // 建议是 MaxIdleTimeout 的一半，或者更小的值
-			InitialPacketSize:       testServer.MtuPacketSize, //初始包大小
-			DisablePathMTUDiscovery: false,                    // 允许路径 MTU 探索
+			HandshakeIdleTimeout:    5 * time.Second,         // 默认5s
+			MaxIdleTimeout:          10 * time.Second,        // 默认30s
+			KeepAlivePeriod:         3 * time.Second,         // 建议是 MaxIdleTimeout 的一半，或者更小的值
+			InitialPacketSize:       testServer.FecBlockSize, //初始包大小
+			DisablePathMTUDiscovery: false,                   // 允许路径 MTU 探索
 			Allow0RTT:               true,
 			EnableDatagrams:         testServer.SupportFec, //允许直接传输udp
 			Tracer:                  qlog.DefaultConnectionTracer,
