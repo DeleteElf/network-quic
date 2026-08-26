@@ -142,8 +142,8 @@ func ClientConnect(channelCount C.int, config *C.NetworkData) C.int {
 		if clientCtx.SupportFec {
 			for i := 0; i < sock.ChannelCount; i++ {
 				sock.StreamConfigs[i].SetStreamType(network.StreamType(i)) //设置通道媒体类型
+				sock.StreamConfigs[i].FecPacketSize = clientCtx.FecBlockSize
 			}
-			sock.StreamConfigs[2].FecPacketSize = clientCtx.FecBlockSize
 		}
 	}
 
@@ -400,10 +400,12 @@ func ServerCreate(config *C.NetworkData) C.int {
 	}
 	serverCtx.OnAcceptSocket = func(sock *network.Socket) {
 		socketMap[sock.Id] = sock
-		for i := 0; i < sock.ChannelCount; i++ {
-			sock.StreamConfigs[i].SetStreamType(network.StreamType(i)) //设置通道媒体类型
+		if serverCtx.SupportFec {
+			for i := 0; i < sock.ChannelCount; i++ {
+				sock.StreamConfigs[i].SetStreamType(network.StreamType(i))   //设置通道媒体类型
+				sock.StreamConfigs[i].FecPacketSize = serverCtx.FecBlockSize //将video流的fec块大小设定好
+			}
 		}
-		sock.StreamConfigs[2].FecPacketSize = serverCtx.FecBlockSize //将video流的fec块大小设定好
 		if onAcceptSocket != nil {
 			C.callMessageCallback(onAcceptSocket, C.CString(sock.Id))
 		}
