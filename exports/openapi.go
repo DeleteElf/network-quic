@@ -171,10 +171,10 @@ func ClientConnect(channelCount C.int, config *C.NetworkData) C.int {
 		if jsonObject["fec"] != nil {
 			clientCtx.SupportFec = jsonObject["fec"].(bool)
 			if jsonObject["fec_bs"] != nil {
-				clientCtx.FecBlockSize = uint16(jsonObject["fec_bs"].(int))
+				clientCtx.FecBlockSize = uint16(jsonObject["fec_bs"].(float64))
 			}
 			if jsonObject["fec_min_pkts"] != nil {
-				clientCtx.FecMinRequiredPackets = jsonObject["fec_min_pkts"].(int)
+				clientCtx.FecMinRequiredPackets = int(jsonObject["fec_min_pkts"].(float64))
 			}
 		}
 		clientCtx.OnSocketConnected = socketConnectedCallback
@@ -200,10 +200,10 @@ func ClientConnect(channelCount C.int, config *C.NetworkData) C.int {
 		if jsonObject["fec"] != nil {
 			clientCtx.SupportFec = jsonObject["fec"].(bool)
 			if jsonObject["fec_bs"] != nil {
-				clientCtx.FecBlockSize = uint16(jsonObject["fec_bs"].(int))
+				clientCtx.FecBlockSize = uint16(jsonObject["fec_bs"].(float64))
 			}
 			if jsonObject["fec_min_pkts"] != nil {
-				clientCtx.FecMinRequiredPackets = jsonObject["fec_min_pkts"].(int)
+				clientCtx.FecMinRequiredPackets = int(jsonObject["fec_min_pkts"].(float64))
 			}
 		}
 		clientCtx.OnSocketConnected = socketConnectedCallback
@@ -392,10 +392,10 @@ func ServerCreate(config *C.NetworkData) C.int {
 	if jsonObject["fec"] != nil {
 		serverCtx.SupportFec = jsonObject["fec"].(bool)
 		if jsonObject["fec_bs"] != nil {
-			serverCtx.FecBlockSize = uint16(jsonObject["fec_bs"].(int))
+			serverCtx.FecBlockSize = uint16(jsonObject["fec_bs"].(float64))
 		}
 		if jsonObject["fec_min_pkts"] != nil {
-			serverCtx.FecMinRequiredPackets = jsonObject["fec_min_pkts"].(int)
+			serverCtx.FecMinRequiredPackets = int(jsonObject["fec_min_pkts"].(float64))
 		}
 	}
 	serverCtx.OnAcceptSocket = func(sock *network.Socket) {
