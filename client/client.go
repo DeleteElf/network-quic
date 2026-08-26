@@ -30,6 +30,8 @@ type Client struct {
 	network.Config
 	ice.IceWorker
 	framework.CloseableObject
+
+	OnSocketConnected network.SocketCallbackFunc
 }
 
 // NewClient 创建客户端实例
@@ -139,11 +141,6 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 	}
 	if cli.SupportFec { //如果启动了Fec，我们需要对fec的配置进行检查
 		for i := 0; i < channelCount; i++ {
-			if i >= 3 { //如果太多条的流，外部没有明确，则后面都是属于视频通道流
-				cli.StreamConfigs[i].Type = network.Video
-			} else {
-				cli.StreamConfigs[i].Type = network.StreamType(i)
-			}
 			switch cli.StreamConfigs[i].Type {
 			//case network.Video: //客户端不需要向服务端发送视频数据，这里只有心跳包
 			//	cli.StreamConfigs[i].DataShards = 10
@@ -164,8 +161,10 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 	cli.Socket.StreamConfigs = cli.StreamConfigs
 	cli.Socket.CreateChannels()
 	cli.Socket.Conn = quicConn
-
 	slog.Info("客户端连接成功！", slog.Int("通道数", cli.Socket.ChannelCount))
+	if cli.OnSocketConnected != nil {
+		cli.OnSocketConnected(cli.Socket)
+	}
 	for i := 0; i < channelCount; i++ {
 		err = cli.Socket.InitFecParam(i)
 		if err != nil {

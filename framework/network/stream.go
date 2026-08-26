@@ -14,10 +14,9 @@ import (
 type StreamType int
 
 const (
-	Control StreamType = iota
+	Message StreamType = iota
 	Audio
 	Video
-	Message
 )
 
 // signSalt, 使用 openssl rand -hex 32 生成，每个版本不一样，定期删除过旧的版本
@@ -39,7 +38,7 @@ type StreamInfo struct {
 	Type    int    `json:"type"`
 	Ts      int64  `json:"t"` // 用法见 ValidateStreamInfo
 	Sign    string `json:"s"` // 客户端的签名，用于服务端校验客户端的合法性
-	
+
 	ChannelIndex int `json:"i"`
 	ChannelCount int `json:"c"`
 }

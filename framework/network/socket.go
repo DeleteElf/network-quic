@@ -266,7 +266,7 @@ func (s *Socket) GetFecDecodeInfo(data []byte) *FECPacket {
 		return nil
 	}
 	result := &FECPacket{}
-	if data[0]&0x80 == 1 { //标准的rtp包
+	if data[0]&0x80 == 0x80 { //标准的rtp包
 		fecInfo := binary.BigEndian.Uint32(data[28:])
 		result.ChannelId = int(fecInfo & 0x07) // channelId: 占 3 位
 		if result.ChannelId < 0 || result.ChannelId >= s.ChannelCount {
@@ -277,6 +277,7 @@ func (s *Socket) GetFecDecodeInfo(data []byte) *FECPacket {
 		if result.GroupId < s.StreamChannels[result.ChannelId].NextGroupId { //已经解码成功的Id就不要了
 			return nil
 		}
+		//	binary.BigEndian.PutUint32(buffer[i][28:], uint32(dataShards<<22|i<<12|fecPercentage<<4|idrData<<3|channelId)) //FecInfo 增加idr信息、通道信息
 		result.Idr = (fecInfo>>3)&0x01 == 1
 		result.ShardIdx = int((fecInfo >> 12) & 0xFF)
 
@@ -285,7 +286,7 @@ func (s *Socket) GetFecDecodeInfo(data []byte) *FECPacket {
 		result.ParityShards = (result.DataShards*fecPercentage + 99) / 100
 		result.Payload = data[VideoHeaderLength:]
 		result.Length = uint16(len(result.Payload))
-		result.Total = (result.DataShards + result.ParityShards) * int(result.Length)
+		result.Total = result.DataShards * int(result.Length)
 	} else {
 		chnId := int(data[0])
 		if chnId < 0 || chnId >= s.ChannelCount {
@@ -424,14 +425,15 @@ func (s *Socket) SendFecDatagram(channelId int, frameIndex uint64, idr bool, dat
 		}
 	case Video: //支持媒体流传输的特殊协议
 		length := len(data)
-		blockSize := int(s.MtuPacketSize)
+		blockSize := int(s.StreamConfigs[channelId].FecPacketSize)
 		firstPacketHeader := (*VideoPacketHeader)(unsafe.Pointer(&data[0]))
-		fecPercentage := int(data[28])
+		fecPercentage := int(firstPacketHeader.Packet.FecInfo >> 4 & 0xff)
 		lowSeq := firstPacketHeader.Packet.StreamPacketIndex >> 8
-		if s.FecPacketIndex[firstPacketHeader.Rtp.ssrc] == nil {
-			atomic.StoreUint32(s.FecPacketIndex[firstPacketHeader.Rtp.ssrc], 0)
+		ssrc := binary.BigEndian.Uint32(data[8:]) //bits.ReverseBytes32(firstPacketHeader.Rtp.Ssrc)
+		if s.FecPacketIndex[ssrc] == nil {
+			s.FecPacketIndex[ssrc] = new(uint32)
 		}
-		packetIndex := atomic.AddUint32(s.FecPacketIndex[firstPacketHeader.Rtp.ssrc], 1)
+		packetIndex := atomic.AddUint32(s.FecPacketIndex[ssrc], 1)
 		pad := length%blockSize != 0 //是否需要补零
 		dataShards := (length + (blockSize - 1)) / blockSize
 		parityShards := (dataShards*fecPercentage + 99) / 100
@@ -465,7 +467,7 @@ func (s *Socket) SendFecDatagram(channelId int, frameIndex uint64, idr bool, dat
 
 			binary.BigEndian.PutUint32(buffer[i][16:], packetIndex)                                                        //StreamPacketIndex
 			binary.BigEndian.PutUint32(buffer[i][28:], uint32(dataShards<<22|i<<12|fecPercentage<<4|idrData<<3|channelId)) //FecInfo 增加idr信息、通道信息
-			binary.BigEndian.PutUint16(buffer[i][2:], uint16(lowSeq+uint32(i)))                                            //sequenceNumber
+			binary.BigEndian.PutUint16(buffer[i][2:], uint16(lowSeq+uint32(i)))                                            //SequenceNumber
 		}
 		if fecPercentage != 0 {
 			usedBuffers := make([]*[]byte, 0, parityShards)
@@ -485,13 +487,13 @@ func (s *Socket) SendFecDatagram(channelId int, frameIndex uint64, idr bool, dat
 				packetHeader.Packet.FrameIndex = firstPacketHeader.Packet.FrameIndex
 				binary.BigEndian.PutUint32(buffer[i][16:], packetIndex)                                                        //StreamPacketIndex
 				binary.BigEndian.PutUint32(buffer[i][28:], uint32(dataShards<<22|i<<12|fecPercentage<<4|idrData<<3|channelId)) //FecInfo 增加idr信息、通道信息
-				binary.BigEndian.PutUint16(buffer[i][2:], uint16(lowSeq+uint32(i)))                                            //sequenceNumber
+				binary.BigEndian.PutUint16(buffer[i][2:], uint16(lowSeq+uint32(i)))                                            //SequenceNumber
 				packetHeader.Packet.MultiFecBlocks = firstPacketHeader.Packet.MultiFecBlocks
 				packetHeader.Packet.MultiFecFlags = 0
 
 				packetHeader.Rtp.Header = firstPacketHeader.Rtp.Header
-				packetHeader.Rtp.timestamp = firstPacketHeader.Rtp.timestamp
-				packetHeader.Rtp.ssrc = firstPacketHeader.Rtp.ssrc
+				packetHeader.Rtp.Timestamp = firstPacketHeader.Rtp.Timestamp
+				packetHeader.Rtp.Ssrc = firstPacketHeader.Rtp.Ssrc
 
 				// Parity 包的 Payload 区域直接映射给 encoder，准备接收计算结果
 				shards[i] = buffer[i][VideoHeaderLength:blockSize]
@@ -510,7 +512,7 @@ func (s *Socket) SendFecDatagram(channelId int, frameIndex uint64, idr bool, dat
 			_ = s.Conn.SendDatagram(shard) //发送处理好的数据
 		}
 	default:
-		targetDataShards := int(math.Ceil(float64(total) / float64(s.MtuPacketSize-FecPacketHeaderLength)))
+		targetDataShards := int(math.Ceil(float64(total) / float64(s.StreamConfigs[channelId].FecPacketSize-FecPacketHeaderLength)))
 		targetParityShards := int(math.Ceil(float64(targetDataShards) / float64(s.StreamConfigs[channelId].DataShards) * float64(s.StreamConfigs[channelId].ParityShards)))
 		totalShards := targetDataShards + targetParityShards
 		if totalShards > 255 { //为了防止数据分片过大，我们进行大小的压缩

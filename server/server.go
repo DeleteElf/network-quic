@@ -213,21 +213,6 @@ func (s *Server) processStream(quicConn *quic.Conn, stream *quic.Stream, onDisco
 	}
 	socket := s.Sockets[info.Id]
 	if s.SupportFec && s.QuicConfig.EnableDatagrams {
-		socket.StreamConfigs[info.ChannelIndex].Type = network.StreamType(info.Type)
-		if socket.StreamConfigs[info.ChannelIndex].Type != network.Control {
-			socket.StreamConfigs[info.ChannelIndex].EnableFec = true
-			switch socket.StreamConfigs[info.ChannelIndex].Type {
-			case network.Audio: //音频，我们按固定50%来控制
-				socket.StreamConfigs[info.ChannelIndex].DataShards = 4
-				socket.StreamConfigs[info.ChannelIndex].ParityShards = 2
-			case network.Video: //todo：这个要从上层配置的fec百分比来，这里暂时写死
-				socket.StreamConfigs[info.ChannelIndex].DataShards = 10
-				socket.StreamConfigs[info.ChannelIndex].ParityShards = 3
-				break
-			default:
-				break
-			}
-		}
 		err = socket.InitFecParam(info.ChannelIndex)
 	}
 	s.lock.Unlock()
