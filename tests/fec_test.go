@@ -101,22 +101,26 @@ func fecMessageHandler(sock *network.Socket, channelIndex int) {
 			if channelIndex == 1 { //模拟sunshine的音频核心业务逻辑
 				time := uint32(0)
 				buffer := make([]byte, 1040)
-				for i := 0; i < 4; i++ {
-					rtp, _ := network.ConvertByteToRtpPacket(buffer)
-					rtp.Header = 0x80
-					rtp.PacketType = 0x0061
-					rtp.SequenceNumber = bits.ReverseBytes16(uint16(i))
-					rtp.Timestamp = bits.ReverseBytes32(time)
-					//network.RtpPacket{
-					//	Header:         0x80,
-					//	PacketType:     0x0061,
-					//	SequenceNumber: bits.ReverseBytes16(1),
-					//	Timestamp:      bits.ReverseBytes32(time),
-					//	Ssrc:           0,
-					//}
-					time += 40
-					sock.SendFecDatagram(channelIndex, false, buffer)
+				for j := 0; j < 5; j++ {
+					sock.StreamChannels[1].FrameIndex = uint64(j)
+					for i := 0; i < 4; i++ {
+						rtp, _ := network.ConvertByteToRtpPacket(buffer)
+						rtp.Header = 0x80
+						rtp.PacketType = 0x0061
+						rtp.SequenceNumber = bits.ReverseBytes16(uint16(j*4 + i))
+						rtp.Timestamp = bits.ReverseBytes32(time)
+						//network.RtpPacket{
+						//	Header:         0x80,
+						//	PacketType:     0x0061,
+						//	SequenceNumber: bits.ReverseBytes16(1),
+						//	Timestamp:      bits.ReverseBytes32(time),
+						//	Ssrc:           0,
+						//}
+						time += 5
+						sock.SendFecDatagram(channelIndex, false, buffer)
+					}
 				}
+
 			} else if channelIndex == 2 { //模拟sunshine的核心逻辑，虽然我们并没有载体数据！
 				blockSize := int(sock.StreamConfigs[channelIndex].FecPacketSize)
 				fec_blocks_needed := 1

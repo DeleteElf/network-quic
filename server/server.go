@@ -201,13 +201,15 @@ func (s *Server) processStream(quicConn *quic.Conn, stream *quic.Stream, onDisco
 		socket.CreateChannels()
 		socket.Conn = quicConn
 		s.Sockets[info.Id] = socket
-		if s.OnAcceptSocket != nil {
-			s.OnAcceptSocket(socket)
-		}
 		if s.QuicConfig.EnableDatagrams {
 			if socket.PacketPool == nil {
 				socket.PacketPool = socket.CreatePacketPool(s.QuicConfig.InitialPacketSize)
 			}
+		}
+		if s.OnAcceptSocket != nil {
+			s.OnAcceptSocket(socket)
+		}
+		if s.QuicConfig.EnableDatagrams {
 			go socket.HandleChannelStreamDatagram()
 		}
 	}

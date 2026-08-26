@@ -162,6 +162,11 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 	cli.Socket.CreateChannels()
 	cli.Socket.Conn = quicConn
 	slog.Info("客户端连接成功！", slog.Int("通道数", cli.Socket.ChannelCount))
+	if cli.QuicConfig.EnableDatagrams && cli.SupportFec {
+		if cli.Socket.PacketPool == nil {
+			cli.Socket.PacketPool = cli.Socket.CreatePacketPool(cli.QuicConfig.InitialPacketSize)
+		}
+	}
 	if cli.OnSocketConnected != nil {
 		cli.OnSocketConnected(cli.Socket)
 	}
@@ -186,9 +191,6 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 		go cli.Socket.HandleChannelStreamData(i, stream)
 	}
 	if cli.QuicConfig.EnableDatagrams && cli.SupportFec {
-		if cli.Socket.PacketPool == nil {
-			cli.Socket.PacketPool = cli.Socket.CreatePacketPool(cli.QuicConfig.InitialPacketSize)
-		}
 		go cli.Socket.HandleChannelStreamDatagram()
 	}
 	return nil

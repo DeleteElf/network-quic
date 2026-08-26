@@ -55,6 +55,7 @@ type StreamChannel struct {
 	FecEncoders   map[string]reedsolomon.Encoder
 	FecGroups     map[uint64]*FECGroup
 	SharedShards  [][]byte
+	ParityShards  [][]byte
 	NextGroupId   uint64
 	lockEncoders  sync.Mutex
 	lockFecGroups sync.Mutex

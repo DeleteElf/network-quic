@@ -381,7 +381,13 @@ func (s *Socket) InitFecParam(channelId int) error {
 	if config.EnableFec {
 		atomic.AddUint64(&s.StreamChannels[channelId].NextGroupId, 1)
 		if config.Type == Audio { //音频大约一个数据包是334大小左右，我们直接塞进一个里面
-			s.StreamChannels[channelId].SharedShards = make([][]byte, config.DataShards+config.ParityShards)
+			total := config.DataShards + config.ParityShards
+			s.StreamChannels[channelId].SharedShards = make([][]byte, total)
+			s.StreamChannels[channelId].ParityShards = make([][]byte, config.ParityShards)
+			for i := 0; i < config.ParityShards; i++ {
+				s.StreamChannels[channelId].ParityShards[i] = make([]byte, config.FecPacketSize)
+			}
+			slog.Debug("音频奇偶校验缓存已经分配！")
 		}
 	}
 	return nil // s.StreamChannels[channelId].BuildFecEncoder()
@@ -412,19 +418,29 @@ func (s *Socket) SendFecDatagram(channelId int, idr bool, data []byte) (bool, er
 		if index == 0 {
 			atomic.AddUint64(&channel.FrameIndex, 1)
 		}
+
 		channel.SharedShards[index] = data[RtpHeaderLength:]
 		_ = s.sendFecShardDatagram(channelId, channel.FrameIndex, idr, index, total, config.DataShards, config.ParityShards, data)
-		if index == 0 {
+		if index == config.DataShards-1 {
 			encoder, err := channel.GetFecEncoder(config.DataShards, config.ParityShards)
 			if err != nil {
 				return false, err
 			}
+			totalShards := config.DataShards + config.ParityShards
+			for i := config.DataShards; i < totalShards; i++ { //补发奇偶校验包
+				if channel.SharedShards[i] == nil || cap(channel.SharedShards[i]) != total-RtpHeaderLength {
+					channel.SharedShards[i] = channel.ParityShards[i-config.DataShards][RtpHeaderLength:total]
+				}
+				clear(channel.SharedShards[i]) //清除数据防止脏读
+			}
 			err = encoder.Encode(channel.SharedShards)
 			if err != nil {
-				slog.Debug("编码fec过程发生错误", slog.Int("channelId", channelId), slog.Any("err", err))
+				slog.Debug("编码fec过程发生错误", slog.Int("channelId", channelId),
+					slog.Any("sequenceNumber", sequenceNumber), slog.Int("length", len(channel.SharedShards)),
+					slog.Int("DataShards", config.DataShards), slog.Int("ParityShards", config.ParityShards),
+					slog.Any("err", err))
 				return false, err
 			}
-			totalShards := config.DataShards + config.ParityShards
 			for i := config.DataShards; i < totalShards; i++ { //补发奇偶校验包
 				_ = s.sendFecShardDatagram(channelId, channel.FrameIndex, idr, i, total, config.DataShards, config.ParityShards, channel.SharedShards[i])
 			}
@@ -488,6 +504,7 @@ func (s *Socket) SendFecDatagram(channelId int, idr bool, data []byte) (bool, er
 				bufPtr := s.PacketPool.Get().(*[]byte)
 				usedBuffers = append(usedBuffers, bufPtr)
 				buffer[i] = (*bufPtr)[:blockSize]
+				clear(buffer[i])
 				packetHeader := (*VideoPacketHeader)(unsafe.Pointer(&buffer[i][0]))
 
 				packetHeader.Packet.FrameIndex = firstPacketHeader.Packet.FrameIndex
@@ -510,7 +527,9 @@ func (s *Socket) SendFecDatagram(channelId int, idr bool, data []byte) (bool, er
 			}
 			err = encoder.Encode(shards)
 			if err != nil {
-				slog.Debug("编码fec过程发生错误", slog.Int("channelId", channelId), slog.Any("err", err))
+				slog.Debug("编码fec过程发生错误", slog.Int("channelId", channelId),
+					slog.Int("DataShards", dataShards), slog.Int("ParityShards", parityShards),
+					slog.Any("err", err))
 				return false, err
 			}
 		}
@@ -535,7 +554,9 @@ func (s *Socket) SendFecDatagram(channelId int, idr bool, data []byte) (bool, er
 		}
 		err = encoder.Encode(shards)
 		if err != nil {
-			slog.Debug("编码fec过程发生错误", slog.Int("channelId", channelId), slog.Any("err", err))
+			slog.Debug("编码fec过程发生错误", slog.Int("channelId", channelId),
+				slog.Int("DataShards", targetDataShards), slog.Int("ParityShards", targetParityShards),
+				slog.Any("err", err))
 			return false, err
 		}
 		for index, shard := range shards {
