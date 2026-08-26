@@ -266,6 +266,9 @@ func (s *Socket) GetFecDecodeInfo(data []byte) *FECPacket {
 	}
 	result := &FECPacket{}
 	if data[0]&0x80 == 0x80 { //标准的rtp包
+		//if data[1] == 0x0061 { //音频数据包 因为音频数据包，我们没有采用传统结构传输，因此不在这里
+		//
+		//} else {
 		fecInfo := binary.BigEndian.Uint32(data[28:])
 		result.ChannelId = int(fecInfo & 0x07) // channelId: 占 3 位
 		if result.ChannelId < 0 || result.ChannelId >= s.ChannelCount {
@@ -286,6 +289,7 @@ func (s *Socket) GetFecDecodeInfo(data []byte) *FECPacket {
 		result.Payload = data[VideoHeaderLength:]
 		result.Length = uint16(len(result.Payload))
 		result.Total = result.DataShards * int(result.Length)
+		//}
 	} else {
 		chnId := int(data[0])
 		if chnId < 0 || chnId >= s.ChannelCount {
