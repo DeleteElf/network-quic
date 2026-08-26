@@ -34,8 +34,11 @@ func TestFecClient(t *testing.T) {
 	cli.OnSocketConnected = func(sock *network.Socket) {
 		for i := 0; i < sock.ChannelCount; i++ {
 			sock.StreamConfigs[i].SetStreamType(network.StreamType(i)) //设置通道媒体类型
-			if i == 2 {
-				sock.StreamConfigs[i].FecPacketSize = cli.FecBlockSize
+			sock.StreamConfigs[i].FecPacketSize = cli.FecBlockSize
+			if i == 0 {
+				sock.StreamConfigs[i].EnableFec = true
+				sock.StreamConfigs[i].DataShards = 4
+				sock.StreamConfigs[i].ParityShards = 2
 			}
 		}
 	}
@@ -53,10 +56,11 @@ func TestFecClient(t *testing.T) {
 	}
 	msg2 := "hello"
 	slog.Info("正在向通道2发送数据", slog.String("msg", msg2))
-	_, _ = cli.Socket.Send(2, []byte(msg2))
-
+	for i := 0; i < 2; i++ {
+		_, _ = cli.Socket.Send(i+1, []byte(msg2))
+	}
 	msg3 := "hello,如果数据太短，我们在fec模式下，就会报错，谨记！！！"
-	_, _ = cli.Socket.Send(1, []byte(msg3))
+	_, _ = cli.Socket.Send(0, []byte(msg3))
 	slog.Info("正在向通道1发送数据", slog.String("msg", msg3))
 	//time.Sleep(time.Second * 3) //等待3秒，等他们通讯完成再退出
 	for {
@@ -94,7 +98,26 @@ func fecMessageHandler(sock *network.Socket, channelIndex int) {
 		slog.Debug("收到数据：", slog.Int("channelId", currentBuffer.ChannelId), slog.String("msg", msg),
 			slog.String("clientId", currentBuffer.ClientId))
 		if msg == "hello" {
-			if channelIndex == 2 {
+			if channelIndex == 1 { //模拟sunshine的音频核心业务逻辑
+				time := uint32(0)
+				buffer := make([]byte, 1040)
+				for i := 0; i < 4; i++ {
+					rtp, _ := network.ConvertByteToRtpPacket(buffer)
+					rtp.Header = 0x80
+					rtp.PacketType = 0x0061
+					rtp.SequenceNumber = bits.ReverseBytes16(uint16(i))
+					rtp.Timestamp = bits.ReverseBytes32(time)
+					//network.RtpPacket{
+					//	Header:         0x80,
+					//	PacketType:     0x0061,
+					//	SequenceNumber: bits.ReverseBytes16(1),
+					//	Timestamp:      bits.ReverseBytes32(time),
+					//	Ssrc:           0,
+					//}
+					time += 40
+					sock.SendFecDatagram(channelIndex, false, buffer)
+				}
+			} else if channelIndex == 2 { //模拟sunshine的核心逻辑，虽然我们并没有载体数据！
 				blockSize := int(sock.StreamConfigs[channelIndex].FecPacketSize)
 				fec_blocks_needed := 1
 				blockIndex := 0
@@ -107,7 +130,7 @@ func fecMessageHandler(sock *network.Socket, channelIndex int) {
 					packet, _ := network.ConvertByteToVideoPacket(buf)
 					packet.Header.Rtp.Header = 0x80
 					packet.Header.Rtp.PacketType = 1
-					packet.Header.Rtp.SequenceNumber = bits.ReverseBytes16(1)
+					packet.Header.Rtp.SequenceNumber = bits.ReverseBytes16(uint16(i))
 					packet.Header.Rtp.Timestamp = bits.ReverseBytes32(uint32(time.Now().UnixMilli()))
 					packet.Header.Rtp.Ssrc = bits.ReverseBytes32(0)
 
@@ -194,10 +217,13 @@ func TestFecServer(t *testing.T) {
 		testServer.OnAcceptSocket = func(sock *network.Socket) {
 			slog.Debug("新的客户端接入：", slog.String("id", sock.Id))
 			for i := 0; i < sock.ChannelCount; i++ {
-				sock.StreamConfigs[i].SetStreamType(network.StreamType(i)) //设置通道媒体类型
-				if i == 2 {
-					sock.StreamConfigs[i].FecPacketSize = testServer.FecBlockSize
+				if i != 0 {
+					sock.StreamConfigs[i].SetStreamType(network.StreamType(i)) //设置通道媒体类型
+				} else {
+					sock.StreamConfigs[i].SetStreamType(network.StreamType(2)) //强制启动文本的fec
+					sock.StreamConfigs[i].Type = network.StreamType(i)
 				}
+				sock.StreamConfigs[i].FecPacketSize = testServer.FecBlockSize
 				go fecMessageHandler(sock, i)
 			}
 		}

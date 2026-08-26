@@ -39,7 +39,15 @@ type AudioPacket struct {
 	Rtp RtpPacket
 }
 
-// ConvertByteToVideoPacket 将数据直接转成结构，要求数据结构对齐，修改结构变量即修改数据变量，这里会默认执行Little-Endian
+// ConvertByteToRtpPacket 将数据直接转成RtpPacket结构，要求数据结构对齐，修改结构变量即修改数据变量，windows这里会默认执行Little-Endian
+func ConvertByteToRtpPacket(data []byte) (*RtpPacket, error) {
+	if len(data) >= RtpHeaderLength {
+		return (*RtpPacket)(unsafe.Pointer(&data[0])), nil
+	}
+	return nil, errors.New("转换失败！")
+}
+
+// ConvertByteToVideoPacket 将数据直接转成VideoPacket结构，要求数据结构对齐，修改结构变量即修改数据变量，windows这里会默认执行Little-Endian
 func ConvertByteToVideoPacket(data []byte) (*VideoPacket, error) {
 	if len(data) >= VideoHeaderLength {
 		return &VideoPacket{

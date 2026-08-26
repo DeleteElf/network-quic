@@ -225,8 +225,7 @@ func (s *Socket) SendWithIdr(channelId int, idr bool, data []byte) (bool, error)
 	channel := s.StreamChannels[channelId]
 	config := s.StreamConfigs[channelId]
 	if config.EnableFec && len(data) > s.FecLimitPacketSize {
-		frameIndex := atomic.AddUint64(&channel.FrameIndex, 1)
-		return s.SendFecDatagram(channelId, frameIndex, idr, data)
+		return s.SendFecDatagram(channelId, idr, data)
 	} else {
 		return channel.Send(data)
 	}
@@ -393,7 +392,7 @@ func (s *Socket) UpdateFecParam(channelId, dataShards, parityShards int) error {
 	return nil
 }
 
-func (s *Socket) SendFecDatagram(channelId int, frameIndex uint64, idr bool, data []byte) (bool, error) {
+func (s *Socket) SendFecDatagram(channelId int, idr bool, data []byte) (bool, error) {
 	//slog.Debug("待发送的未编码数据包", slog.Int("ChannelId", channelId), slog.Any("长度", len(data)))
 	total := len(data)  //通过包的长度，动态计算分片，这里总是取上整！
 	if total > 351900 { //计算255个分片  每个分片 1380的极限大小
@@ -403,11 +402,14 @@ func (s *Socket) SendFecDatagram(channelId int, frameIndex uint64, idr bool, dat
 	channel := s.StreamChannels[channelId]
 	config := &s.StreamConfigs[channelId]
 	switch s.StreamConfigs[channelId].Type {
-	case Audio:
-		//音频模式特殊应用，他还不能有关键帧，如果超时丢弃了，数据包也是不要的，直接用下一个
-		index := int(frameIndex % uint64(config.DataShards))
-		channel.SharedShards[index] = data
-		_ = s.sendFecShardDatagram(channelId, frameIndex, idr, index, total, config.DataShards, config.ParityShards, data)
+	case Audio: //音频模式特殊应用，他还不能有关键帧，如果超时丢弃了，数据包也是不要的，直接用下一个,使用的是标准的rtp数据包
+		sequenceNumber := binary.BigEndian.Uint16(data[2:]) //取出序列号
+		index := int(sequenceNumber % uint16(config.DataShards))
+		if index == 0 {
+			atomic.AddUint64(&channel.FrameIndex, 1)
+		}
+		channel.SharedShards[index] = data[RtpHeaderLength:]
+		_ = s.sendFecShardDatagram(channelId, channel.FrameIndex, idr, index, total, config.DataShards, config.ParityShards, data)
 		if index == 0 {
 			encoder, err := channel.GetFecEncoder(config.DataShards, config.ParityShards)
 			if err != nil {
@@ -420,7 +422,7 @@ func (s *Socket) SendFecDatagram(channelId int, frameIndex uint64, idr bool, dat
 			}
 			totalShards := config.DataShards + config.ParityShards
 			for i := config.DataShards; i < totalShards; i++ { //补发奇偶校验包
-				_ = s.sendFecShardDatagram(channelId, frameIndex, idr, i, total, config.DataShards, config.ParityShards, channel.SharedShards[i])
+				_ = s.sendFecShardDatagram(channelId, channel.FrameIndex, idr, i, total, config.DataShards, config.ParityShards, channel.SharedShards[i])
 			}
 		}
 	case Video: //支持媒体流传输的特殊协议
@@ -512,6 +514,7 @@ func (s *Socket) SendFecDatagram(channelId int, frameIndex uint64, idr bool, dat
 			_ = s.Conn.SendDatagram(shard) //发送处理好的数据
 		}
 	default:
+		//frameIndex := atomic.AddUint64(&channel.FrameIndex, 1)
 		targetDataShards := int(math.Ceil(float64(total) / float64(s.StreamConfigs[channelId].FecPacketSize-FecPacketHeaderLength)))
 		targetParityShards := int(math.Ceil(float64(targetDataShards) / float64(s.StreamConfigs[channelId].DataShards) * float64(s.StreamConfigs[channelId].ParityShards)))
 		totalShards := targetDataShards + targetParityShards
@@ -532,7 +535,7 @@ func (s *Socket) SendFecDatagram(channelId int, frameIndex uint64, idr bool, dat
 			return false, err
 		}
 		for index, shard := range shards {
-			_ = s.sendFecShardDatagram(channelId, frameIndex, idr, index, total, targetDataShards, targetParityShards, shard)
+			_ = s.sendFecShardDatagram(channelId, channel.FrameIndex, idr, index, total, targetDataShards, targetParityShards, shard)
 		}
 	}
 	return true, nil

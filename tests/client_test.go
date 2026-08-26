@@ -30,9 +30,9 @@ func receiveHandler(cli *client.Client, channelIndex int) {
 			slog.Info("收到来自服务端的新消息", slog.Int("channel", channelIndex), slog.String("msg", string(buffer.Data)))
 			cli.Socket.StreamChannels[channelIndex].Buffer = nil
 			if channelIndex == 0 {
-				_, _ = cli.Socket.Send(channelIndex, []byte("bye"))
-				slog.Info("send bye", slog.Int("channel", channelIndex))
-				cli.Close()
+				//_, _ = cli.Socket.Send(channelIndex, []byte("bye"))
+				//slog.Info("send bye", slog.Int("channel", channelIndex))
+				//cli.Close()
 				//} else if channelIndex == 1 {
 				//	//time.Sleep(500 * time.Millisecond)
 				//	_, _ = cli.Send(cli.Streams[channelIndex], []byte("restart"))
