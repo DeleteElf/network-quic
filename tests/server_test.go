@@ -15,16 +15,6 @@ import (
 
 var restart bool = false
 
-func socketHandler(svr *server.Server, sock *network.Socket) {
-	if sock == nil {
-		slog.Error("客户端已经不存在！")
-		return
-	}
-	for i := 0; i < sock.ChannelCount; i++ {
-		go messageHandler(svr, sock, i)
-	}
-}
-
 func messageHandler(svr *server.Server, sock *network.Socket, channelIndex int) {
 	for {
 		if sock.IsClosed {
@@ -70,11 +60,11 @@ func messageHandler(svr *server.Server, sock *network.Socket, channelIndex int) 
 				data := []byte(temp)
 				slog.Debug("正在向客户端发送fec数据包", slog.Int("channelId", currentBuffer.ChannelId),
 					slog.Int("数据长度:", len(data)), slog.String("msg", temp))
-				//if svr.QuicConfig.EnableDatagrams {
-				//	_, err = sock.SendFecDatagram(channelIndex, uint64(i+10), false, data) //这里我们模拟强制乱序，接收重组
-				//} else {
-				_, err = sock.Send(channelIndex, data)
-				//}
+				if svr.QuicConfig.EnableDatagrams && sock.StreamConfigs[channelIndex].EnableFec {
+					_, err = sock.SendFecDatagram(channelIndex, uint64(i+10), false, data) //这里我们模拟强制乱序，接收重组
+				} else {
+					_, err = sock.Send(channelIndex, data)
+				}
 				if err != nil {
 					return
 				}
@@ -115,7 +105,16 @@ func TestServer(t *testing.T) {
 		}
 		testServer.OnAcceptSocket = func(sock *network.Socket) {
 			slog.Debug("新的客户端接入：", slog.String("id", sock.Id))
-			go socketHandler(testServer, sock)
+			if testServer.SupportFec {
+				sock.StreamConfigs[2].FecPacketSize = testServer.FecBlockSize
+			}
+			for i := 0; i < sock.ChannelCount; i++ {
+				if testServer.SupportFec && i == 1 {
+					sock.StreamConfigs[i].SetStreamType(network.StreamType(i)) //设置通道媒体类型
+					sock.StreamConfigs[i].Type = network.StreamType(0)
+				}
+				go messageHandler(testServer, sock, i)
+			}
 		}
 		testServer.QuicConfig = &quic.Config{
 			// MaxIncomingStreams: 0xffffffffffff, // 最大默认stream输入，默认100

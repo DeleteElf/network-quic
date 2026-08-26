@@ -176,7 +176,7 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 			ChannelCount: channelCount,
 			Ts:           time.Now().Unix(),
 			ChannelIndex: i,
-			Type:         int(cli.StreamConfigs[i].Type), //这里需要告诉服务端，是什么类型的流
+			//Type:         int(cli.StreamConfigs[i].Type), //这里需要告诉服务端，是什么类型的流
 		}
 		stream, err := network.CreateStream(cli.Socket.Conn, info) //创建并打开流
 		if err != nil {

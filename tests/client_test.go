@@ -58,7 +58,12 @@ func TestClient(t *testing.T) {
 		EnableDatagrams:         cli.SupportFec,
 		Tracer:                  qlog.DefaultConnectionTracer,
 	}
-
+	cli.OnSocketConnected = func(sock *network.Socket) {
+		if cli.SupportFec {
+			sock.StreamConfigs[1].SetStreamType(network.StreamType(1)) //设置通道媒体类型
+			sock.StreamConfigs[1].Type = network.StreamType(0)
+		}
+	}
 	err := cli.Connect(3, network.STREAM_NETWORK_UDP, func(sock *network.Socket) {
 		slog.Debug("socket已经断开===》！", slog.String("clientId", sock.Id))
 	}) //创建udp网络

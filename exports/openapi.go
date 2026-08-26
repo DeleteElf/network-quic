@@ -138,6 +138,15 @@ func ClientConnect(channelCount C.int, config *C.NetworkData) C.int {
 	if networkType != network.STREAM_NETWORK_UDP {
 		return C.ErrorParam
 	}
+	socketConnectedCallback := func(sock *network.Socket) {
+		if clientCtx.SupportFec {
+			for i := 0; i < sock.ChannelCount; i++ {
+				sock.StreamConfigs[i].SetStreamType(network.StreamType(i)) //设置通道媒体类型
+			}
+			sock.StreamConfigs[2].FecPacketSize = clientCtx.FecBlockSize
+		}
+	}
+
 	if jsonObject["proxy_id"] != nil { //如果配置了代理，则使用代理
 		request := &agent.Requst{
 			Proxy:   true,
@@ -155,11 +164,20 @@ func ClientConnect(channelCount C.int, config *C.NetworkData) C.int {
 		}
 		proxy.ProxyAddr = proxy.ProxyExternalIp + ":" + proxy.ProxyExternalPort //使用外网地址连接
 		clientCtx = client.NewClient(proxy.ProxyAddr, request.CliId)            //尝试连接本机服务
-
 		cfg := &agent.Config{
 			Version:  "1",
 			SignSalt: "2fbbdf99eae1675484a48e8310db1ee42d3bd6fdbc5e3f3755af848b23cc9817",
 		}
+		if jsonObject["fec"] != nil {
+			clientCtx.SupportFec = jsonObject["fec"].(bool)
+			if jsonObject["fec_bs"] != nil {
+				clientCtx.FecBlockSize = uint16(jsonObject["fec_bs"].(int))
+			}
+			if jsonObject["fec_min_pkts"] != nil {
+				clientCtx.FecMinRequiredPackets = jsonObject["fec_min_pkts"].(int)
+			}
+		}
+		clientCtx.OnSocketConnected = socketConnectedCallback
 		agt, err := agent.NewAgent(clientCtx.ServerAddress, uint32(proxy.Idx), 0, cfg)
 		if err == nil && agt != nil {
 			sock := agt.Socket
@@ -181,7 +199,14 @@ func ClientConnect(channelCount C.int, config *C.NetworkData) C.int {
 		clientCtx = client.NewClient(address, id) //尝试连接本机服务
 		if jsonObject["fec"] != nil {
 			clientCtx.SupportFec = jsonObject["fec"].(bool)
+			if jsonObject["fec_bs"] != nil {
+				clientCtx.FecBlockSize = uint16(jsonObject["fec_bs"].(int))
+			}
+			if jsonObject["fec_min_pkts"] != nil {
+				clientCtx.FecMinRequiredPackets = jsonObject["fec_min_pkts"].(int)
+			}
 		}
+		clientCtx.OnSocketConnected = socketConnectedCallback
 		if jsonObject["stun"] != nil && len(jsonObject["stun"].(string)) > 0 &&
 			jsonObject["mgr_addr"] != nil && jsonObject["token"] != nil &&
 			jsonObject["dev_id"] != nil {
@@ -367,18 +392,18 @@ func ServerCreate(config *C.NetworkData) C.int {
 	if jsonObject["fec"] != nil {
 		serverCtx.SupportFec = jsonObject["fec"].(bool)
 		if jsonObject["fec_bs"] != nil {
-			serverCtx.FecBlockSize = jsonObject["fec_bs"].(int)
-			serverCtx.QuicConfig.InitialPacketSize = uint16(serverCtx.FecBlockSize)
+			serverCtx.FecBlockSize = uint16(jsonObject["fec_bs"].(int))
 		}
-		//if jsonObject["fec_per"] != nil {
-		//	serverCtx.FecPercentage = jsonObject["fec_per"].(int)
-		//}
 		if jsonObject["fec_min_pkts"] != nil {
 			serverCtx.FecMinRequiredPackets = jsonObject["fec_min_pkts"].(int)
 		}
 	}
 	serverCtx.OnAcceptSocket = func(sock *network.Socket) {
 		socketMap[sock.Id] = sock
+		for i := 0; i < sock.ChannelCount; i++ {
+			sock.StreamConfigs[i].SetStreamType(network.StreamType(i)) //设置通道媒体类型
+		}
+		sock.StreamConfigs[2].FecPacketSize = serverCtx.FecBlockSize //将video流的fec块大小设定好
 		if onAcceptSocket != nil {
 			C.callMessageCallback(onAcceptSocket, C.CString(sock.Id))
 		}

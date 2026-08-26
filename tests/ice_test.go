@@ -151,7 +151,15 @@ func TestIceServer(t *testing.T) {
 	}()
 	testServer.OnAcceptSocket = func(sock *network.Socket) {
 		slog.Debug("新的客户端接入：", slog.String("id", sock.Id))
-		go socketHandler(testServer, sock)
+		for i := 0; i < sock.ChannelCount; i++ {
+			if testServer.SupportFec {
+				sock.StreamConfigs[i].SetStreamType(network.StreamType(i)) //设置通道媒体类型
+				if i == 2 {
+					sock.StreamConfigs[i].FecPacketSize = testServer.FecBlockSize
+				}
+			}
+			go messageHandler(testServer, sock, i)
+		}
 	}
 
 	for {
