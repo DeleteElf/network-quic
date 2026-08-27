@@ -16,13 +16,36 @@ import (
 	"time"
 )
 
+// FECPacket Fec数据包,包头长度 12字节
+type FECPacket struct {
+	//通道的编号，主要用于路由分发，1个字节
+	ChannelId int
+	//分组的编号，主要用于重组，8个字节，考虑到可能会播放很久,GroupId并不等于FrameIndex，一个数据包可能被拆成多个分组
+	GroupId uint64
+	Idr     bool
+	//shard的索引 1个字节
+	ShardIdx int
+	//原始数据长度 2个字节 暂时不知道有没意义。。。
+	//DataLength uint16
+	//核心数据分片数
+	DataShards int
+	//fec矩阵分片数
+	ParityShards int
+	//数据总长度
+	Total int
+	//数据包体长度 2个字节
+	Length  uint16
+	Payload []byte
+}
+
 // FECGroup 用于收集和组装同一 GroupID 的分片
 type FECGroup struct {
 	GroupID      uint64
 	DataShards   int
 	ParityShards int
 	Total        int
-	Shards       [][]byte  // 槽位数组，长度为 DataShards + ParityShards
+	Shards       [][]byte // 槽位数组，长度为 DataShards + ParityShards
+	Packets      []*FECPacket
 	Received     int       // 当前已收到的有效分片数
 	CreatedAt    time.Time // 创建时间，用于过期清理
 }
@@ -204,45 +227,79 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 	if !exists {
 		group = &FECGroup{
 			GroupID: packet.GroupId, DataShards: packet.DataShards, ParityShards: packet.ParityShards,
-			Shards: make([][]byte, totalShards), Total: packet.Total,
-			Received: 0, CreatedAt: time.Now(),
+			Shards: make([][]byte, totalShards), Packets: make([]*FECPacket, totalShards),
+			Total: packet.Total, Received: 0, CreatedAt: time.Now(),
 		}
 		sc.FecGroups[packet.GroupId] = group
 	}
-	// 3. 去重与填槽
 	if group.Shards[packet.ShardIdx] == nil {
-		group.Shards[packet.ShardIdx] = packet.Payload
+		if packet.Payload[0]&0x80 == 0x80 { //如果是rtp包
+			switch packet.Payload[1] {
+			case 97:
+				group.Shards[packet.ShardIdx] = packet.Payload[RtpHeaderLength:]
+			case 127:
+				group.Shards[packet.ShardIdx] = packet.Payload[AudioHeaderLength:]
+			default: //video
+				group.Shards[packet.ShardIdx] = packet.Payload[VideoHeaderLength:]
+			}
+		} else {
+			group.Shards[packet.ShardIdx] = packet.Payload
+		}
 		group.Received++
 	}
 	//slog.Debug("收到一个新的数据包", slog.Any("packet", packet), slog.Any("fecGroup", group))
 	// 4. 判定：如果不满足解包门槛，继续等待下一个包
 	for {
 		next, exists := sc.FecGroups[sc.NextGroupId]
-		if exists && next.Received >= next.DataShards {
-			// 关键优化：使用 ReconstructData 仅恢复数据分片，比 Reconstruct 省时省 CPU
-			encoder, err := sc.GetFecEncoder(next.DataShards, next.ParityShards)
-			if err != nil {
-				return fmt.Errorf("获取fec解码器出错: %w", err)
-			}
-			err = encoder.ReconstructData(next.Shards)
-			if err != nil {
-				return fmt.Errorf("fec解码出错: %w", err)
-			}
-			var frameBuf bytes.Buffer
-			err = encoder.Join(&frameBuf, next.Shards, next.Total)
-			if err != nil {
-				return err
-			}
-			//slog.Debug("解码fec完成", slog.Int("groupId", int(next.GroupID)))
-			delete(sc.FecGroups, next.GroupID)
-			atomic.AddUint64(&sc.NextGroupId, 1)
-			if sc.Channel != nil {
-				sc.Channel <- StreamChannelData{
-					ClientId:  sc.ClientId,
-					ChannelId: sc.ChannelId,
-					Offset:    0,
-					Data:      frameBuf.Bytes(),
+		if exists {
+			if next.Received >= next.DataShards { //todo:存在了，数量够了，如果一直不够，什么时候检查超时？
+				// 关键优化：使用 ReconstructData 仅恢复数据分片，比 Reconstruct 省时省 CPU
+				encoder, err := sc.GetFecEncoder(next.DataShards, next.ParityShards)
+				if err != nil {
+					return fmt.Errorf("获取fec解码器出错: %w", err)
 				}
+				err = encoder.ReconstructData(next.Shards)
+				if err != nil {
+					return fmt.Errorf("fec解码出错: %w", err)
+				}
+				//slog.Debug("解码fec完成", slog.Int("groupId", int(next.GroupID)))
+				delete(sc.FecGroups, next.GroupID)
+				atomic.AddUint64(&sc.NextGroupId, 1)
+				if packet.Payload[0]&0x80 == 0x80 { //如果是rtp包
+					//这里可以根据特性进行拼接数据,如果考虑尽量零拷贝处理next.Shards
+					//现在这里有几个问题：
+					//1，我需要补充没有到的正规rtp 包的头信息 ，假设 一共6个数据包，数据分片是4个，当前到达的索引是 0,1,3,4，那么则需要补充序号是2的rtp头
+					//2，我需要告诉上层逻辑，fec已经处理完毕了
+					for i := 0; i < next.DataShards; i++ {
+						if next.Packets[i] == nil { //Payload 是携带rtp包头信息的完整数据缓存
+							//todo:这里重新构建缺失的头，那么取的数据可能是其他任意数据的头，因为，我们不知道是哪个
+						}
+						if sc.Channel != nil {
+							sc.Channel <- StreamChannelData{
+								ClientId:  sc.ClientId,
+								ChannelId: sc.ChannelId,
+								Offset:    0,
+								Data:      next.Packets[i].Payload, //直接使用原始数据包，实现零拷贝
+							}
+						}
+					}
+				} else {
+					var frameBuf bytes.Buffer
+					err = encoder.Join(&frameBuf, next.Shards, next.Total)
+					if err != nil {
+						return err
+					}
+					if sc.Channel != nil {
+						sc.Channel <- StreamChannelData{
+							ClientId:  sc.ClientId,
+							ChannelId: sc.ChannelId,
+							Offset:    0,
+							Data:      frameBuf.Bytes(),
+						}
+					}
+				}
+			} else {
+
 			}
 		} else {
 			return nil
@@ -256,7 +313,7 @@ func (sc *StreamChannel) GetFecEncoder(dataShards, parityShards int) (reedsolomo
 		sc.lockEncoders.Lock()
 		defer sc.lockEncoders.Unlock()
 		if sc.FecEncoders[key] == nil {
-			encoder, err := reedsolomon.New(dataShards, parityShards) //todo:如果需要动态调整时，整理会进行实时修改，如何保证修改前和修改后的发送不会出错？
+			encoder, err := reedsolomon.New(dataShards, parityShards)
 			if err != nil {
 				return nil, err
 			}

@@ -4,15 +4,6 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-const (
-	FecPacketHeaderLength    = 19
-	FecLimitPacketSize       = 100
-	NetMtuPacketSize         = 1400
-	VideoHeaderLength        = 32
-	RtpHeaderLength          = 12
-	NvidiaPacketHeaderLength = 16
-)
-
 type StreamConfig struct {
 	//当前流的数据业务类型
 	Type StreamType

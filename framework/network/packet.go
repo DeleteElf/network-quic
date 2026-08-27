@@ -1,9 +1,18 @@
 package network
 
 import (
-	"encoding/binary"
 	"errors"
 	"unsafe"
+)
+
+const (
+	FecPacketHeaderLength    = 19
+	FecLimitPacketSize       = 100
+	NetMtuPacketSize         = 1400
+	VideoHeaderLength        = 32
+	AudioHeaderLength        = 24
+	RtpHeaderLength          = 12
+	NvidiaPacketHeaderLength = 16
 )
 
 type RtpPacket struct {
@@ -38,11 +47,30 @@ type VideoPacket struct {
 type AudioPacket struct {
 	Rtp RtpPacket
 }
+type AudioFecHeader struct {
+	FecShardIndex      uint8
+	PayloadType        uint8
+	BaseSequenceNumber uint16
+	BaseTimestamp      uint32
+	Ssrc               uint32
+}
+
+type AudioFecPacket struct {
+	Rtp       RtpPacket
+	FecHeader AudioFecHeader
+}
 
 // ConvertByteToRtpPacket 将数据直接转成RtpPacket结构，要求数据结构对齐，修改结构变量即修改数据变量，windows这里会默认执行Little-Endian
 func ConvertByteToRtpPacket(data []byte) (*RtpPacket, error) {
 	if len(data) >= RtpHeaderLength {
 		return (*RtpPacket)(unsafe.Pointer(&data[0])), nil
+	}
+	return nil, errors.New("转换失败！")
+}
+
+func ConvertByteToAudioFecPacket(data []byte) (*AudioFecPacket, error) {
+	if len(data) >= AudioHeaderLength {
+		return (*AudioFecPacket)(unsafe.Pointer(&data[0])), nil
 	}
 	return nil, errors.New("转换失败！")
 }
@@ -60,65 +88,65 @@ func ConvertByteToVideoPacket(data []byte) (*VideoPacket, error) {
 	return nil, errors.New("转换失败！")
 }
 
-func ReadVideoPacket(data []byte, packet *VideoPacket) error {
-	if packet == nil {
-		return errors.New("传入的packet不允许为空！")
-	}
-	if len(data) < VideoHeaderLength {
-		return errors.New("数据长度不足")
-	}
-	// 1. RTP Header 解析
-	packet.Header.Rtp.Header = data[0]
-	packet.Header.Rtp.PacketType = data[1]
-	packet.Header.Rtp.SequenceNumber = binary.BigEndian.Uint16(data[2:4])
-	packet.Header.Rtp.Timestamp = binary.BigEndian.Uint32(data[4:8])
-	packet.Header.Rtp.Ssrc = binary.BigEndian.Uint32(data[8:12])
-	// 2. Reserved 填充 (内联直接赋值，避免数组转型)
-	packet.Header.Reserved[0] = data[12]
-	packet.Header.Reserved[1] = data[13]
-	packet.Header.Reserved[2] = data[14]
-	packet.Header.Reserved[3] = data[15]
-
-	// 3. NV_VIDEO_PACKET 解析
-	packet.Header.Packet.StreamPacketIndex = binary.BigEndian.Uint32(data[16:20])
-	packet.Header.Packet.FrameIndex = binary.BigEndian.Uint32(data[20:24])
-	packet.Header.Packet.Flags = data[24]
-	packet.Header.Packet.ExtraFlags = data[25]
-	packet.Header.Packet.MultiFecFlags = data[26]
-	packet.Header.Packet.MultiFecBlocks = data[27]
-	packet.Header.Packet.FecInfo = binary.BigEndian.Uint32(data[28:32])
-	// 4. Payload 零拷贝引用（切片指针重定向）
-	packet.Payload = data[VideoHeaderLength:]
-	return nil
-}
-
-func WriteVideoPacket(packet *VideoPacket, buffer []byte) ([]byte, error) {
-	//binary.Write() 也可以用binary.Write，但据说性能很低
-	total := VideoHeaderLength + len(packet.Payload)
-	if buffer == nil {
-		buffer = make([]byte, total)
-	} else {
-		if cap(buffer) < total {
-			return nil, errors.New("缓冲长度不足！")
-		}
-		buffer = buffer[:total]
-	}
-	buffer[0] = packet.Header.Rtp.Header
-	buffer[1] = packet.Header.Rtp.PacketType
-	binary.BigEndian.PutUint16(buffer[2:4], packet.Header.Rtp.SequenceNumber)
-	binary.BigEndian.PutUint32(buffer[4:8], packet.Header.Rtp.Timestamp)
-	binary.BigEndian.PutUint32(buffer[8:12], packet.Header.Rtp.Ssrc)
-	buffer[12] = packet.Header.Reserved[0]
-	buffer[13] = packet.Header.Reserved[1]
-	buffer[14] = packet.Header.Reserved[2]
-	buffer[15] = packet.Header.Reserved[3]
-	binary.BigEndian.PutUint32(buffer[16:20], packet.Header.Packet.StreamPacketIndex)
-	binary.BigEndian.PutUint32(buffer[20:24], packet.Header.Packet.FrameIndex)
-	buffer[24] = packet.Header.Packet.Flags
-	buffer[25] = packet.Header.Packet.ExtraFlags
-	buffer[26] = packet.Header.Packet.MultiFecFlags
-	buffer[27] = packet.Header.Packet.MultiFecBlocks
-	binary.BigEndian.PutUint32(buffer[28:VideoHeaderLength], packet.Header.Packet.FecInfo)
-	copy(buffer[VideoHeaderLength:], packet.Payload) //Payload 拷贝 (High-performance memmove)
-	return buffer, nil
-}
+//func ReadVideoPacket(data []byte, packet *VideoPacket) error {
+//	if packet == nil {
+//		return errors.New("传入的packet不允许为空！")
+//	}
+//	if len(data) < VideoHeaderLength {
+//		return errors.New("数据长度不足")
+//	}
+//	// 1. RTP Header 解析
+//	packet.Header.Rtp.Header = data[0]
+//	packet.Header.Rtp.PacketType = data[1]
+//	packet.Header.Rtp.SequenceNumber = binary.BigEndian.Uint16(data[2:4])
+//	packet.Header.Rtp.Timestamp = binary.BigEndian.Uint32(data[4:8])
+//	packet.Header.Rtp.Ssrc = binary.BigEndian.Uint32(data[8:12])
+//	// 2. Reserved 填充 (内联直接赋值，避免数组转型)
+//	packet.Header.Reserved[0] = data[12]
+//	packet.Header.Reserved[1] = data[13]
+//	packet.Header.Reserved[2] = data[14]
+//	packet.Header.Reserved[3] = data[15]
+//
+//	// 3. NV_VIDEO_PACKET 解析
+//	packet.Header.Packet.StreamPacketIndex = binary.BigEndian.Uint32(data[16:20])
+//	packet.Header.Packet.FrameIndex = binary.BigEndian.Uint32(data[20:24])
+//	packet.Header.Packet.Flags = data[24]
+//	packet.Header.Packet.ExtraFlags = data[25]
+//	packet.Header.Packet.MultiFecFlags = data[26]
+//	packet.Header.Packet.MultiFecBlocks = data[27]
+//	packet.Header.Packet.FecInfo = binary.BigEndian.Uint32(data[28:32])
+//	// 4. Payload 零拷贝引用（切片指针重定向）
+//	packet.Payload = data[VideoHeaderLength:]
+//	return nil
+//}
+//
+//func WriteVideoPacket(packet *VideoPacket, buffer []byte) ([]byte, error) {
+//	//binary.Write() 也可以用binary.Write，但据说性能很低
+//	total := VideoHeaderLength + len(packet.Payload)
+//	if buffer == nil {
+//		buffer = make([]byte, total)
+//	} else {
+//		if cap(buffer) < total {
+//			return nil, errors.New("缓冲长度不足！")
+//		}
+//		buffer = buffer[:total]
+//	}
+//	buffer[0] = packet.Header.Rtp.Header
+//	buffer[1] = packet.Header.Rtp.PacketType
+//	binary.BigEndian.PutUint16(buffer[2:4], packet.Header.Rtp.SequenceNumber)
+//	binary.BigEndian.PutUint32(buffer[4:8], packet.Header.Rtp.Timestamp)
+//	binary.BigEndian.PutUint32(buffer[8:12], packet.Header.Rtp.Ssrc)
+//	buffer[12] = packet.Header.Reserved[0]
+//	buffer[13] = packet.Header.Reserved[1]
+//	buffer[14] = packet.Header.Reserved[2]
+//	buffer[15] = packet.Header.Reserved[3]
+//	binary.BigEndian.PutUint32(buffer[16:20], packet.Header.Packet.StreamPacketIndex)
+//	binary.BigEndian.PutUint32(buffer[20:24], packet.Header.Packet.FrameIndex)
+//	buffer[24] = packet.Header.Packet.Flags
+//	buffer[25] = packet.Header.Packet.ExtraFlags
+//	buffer[26] = packet.Header.Packet.MultiFecFlags
+//	buffer[27] = packet.Header.Packet.MultiFecBlocks
+//	binary.BigEndian.PutUint32(buffer[28:VideoHeaderLength], packet.Header.Packet.FecInfo)
+//	copy(buffer[VideoHeaderLength:], packet.Payload) //Payload 拷贝 (High-performance memmove)
+//	return buffer, nil
+//}

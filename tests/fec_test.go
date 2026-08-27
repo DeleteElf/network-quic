@@ -6,6 +6,7 @@ import (
 	"github.com/DeleteElf/zero-net/framework/network"
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/DeleteElf/zero-net/server"
+	"github.com/klauspost/reedsolomon"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/qlog"
 	"log/slog"
@@ -14,6 +15,37 @@ import (
 	"testing"
 	"time"
 )
+
+func TestFecSimple(t *testing.T) {
+	utils.InitLog(slog.LevelDebug, nil)
+	encoder, _ := reedsolomon.New(4, 2)
+	buffers := make([][]byte, 6)
+	shards := make([][]byte, 6)
+	for i := 0; i < 4; i++ {
+		buffers[i] = []byte{byte(i + 1), byte(9 - i), byte(9 - i), byte(9 - i), byte(9 - i), byte(9 - i), byte(9 - i), byte(9 - i)}
+		shards[i] = buffers[i][1:]
+	}
+	for i := 4; i < 6; i++ {
+		buffers[i] = make([]byte, 8)
+		shards[i] = buffers[i][1:]
+	}
+	encoder.Encode(shards)
+	for i := 4; i < 6; i++ {
+		buffers[i][0] = byte(i + 1)
+	}
+	result_shards := make([][]byte, 6)
+	result_shards[0] = buffers[0][1:]
+	result_shards[1] = buffers[1][1:]
+	result_shards[3] = buffers[3][1:]
+	result_shards[5] = buffers[5][1:]
+	buffers[2] = nil
+	buffers[4] = nil
+	err := encoder.ReconstructData(result_shards)
+	if err != nil {
+		return
+	}
+	slog.Debug("1111")
+}
 
 func TestFecClient(t *testing.T) {
 	utils.InitLog(slog.LevelDebug, nil)                       //初始化日志
