@@ -132,7 +132,7 @@ func fecMessageHandler(sock *network.Socket, channelIndex int) {
 		if msg == "hello" {
 			if channelIndex == 1 { //模拟sunshine的音频核心业务逻辑
 				time := uint32(0)
-				buffer := make([]byte, 1040)
+				buffer := make([]byte, 664)
 				for j := 0; j < 5; j++ {
 					sock.StreamChannels[1].FrameIndex = uint64(j)
 					for i := 0; i < 4; i++ {

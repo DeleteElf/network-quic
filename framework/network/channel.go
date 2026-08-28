@@ -270,6 +270,9 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 		// 如果当前等待的组包数量还不足以解码，直接中断等待下一个网络包到达，切勿死循环！
 		if next.Received < next.DataShards {
 			if next.ExpiredAt.Before(time.Now()) { //如果已经过期，则不再等待，直接接收下一个
+				if sc.ChannelId == 2 {
+					slog.Debug("帧接收超时丢弃！", slog.Int("channel", sc.ChannelId), slog.Any("goupId", sc.NextGroupId))
+				}
 				delete(sc.FecGroups, sc.NextGroupId)
 				sc.NextGroupId++ // 单协程处理下无需 atomic，若多协程则整体加锁
 				continue         //过期了，不论是否是关键帧，我们都丢弃了，那么还需要继续等待下一个
@@ -280,6 +283,9 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 						delete(sc.FecGroups, i)
 					}
 					sc.NextGroupId = packet.GroupId //直接移动到当前帧
+					if sc.ChannelId == 2 {
+						slog.Debug("帧接收新的关键帧，跳到！", slog.Int("channel", sc.ChannelId), slog.Any("goupId", sc.NextGroupId))
+					}
 					continue
 				}
 			}
@@ -297,7 +303,9 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 		//slog.Debug("解码fec完成", slog.Int("groupId", int(next.GroupID)))
 		delete(sc.FecGroups, next.GroupID)
 		sc.NextGroupId++ // 单协程处理下无需 atomic，若多协程则整体加锁
-		//atomic.AddUint64(&sc.NextGroupId, 1)
+		if sc.ChannelId == 2 {
+			slog.Debug("解码成功！", slog.Int("channel", sc.ChannelId))
+		}
 		if isRtp { //如果是rtp包
 			//这里可以根据特性进行拼接数据,如果考虑尽量零拷贝处理next.Shards
 			//现在这里有几个问题：
@@ -307,13 +315,7 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 				var resultData []byte
 				if next.Packets[i] == nil { //Payload 是携带rtp包头信息的完整数据缓存
 					//todo:这里重新构建缺失的头，那么取的数据可能是其他任意数据的头，因为，我们不知道是哪个
-					dataLength := len(next.Shards[i])
-					buffer := make([]byte, RtpHeaderLength+dataLength) //循环中，且释放时机不好确定，不使用sync.Pool
-					resultData = RebuildRtpPacket(buffer, next.HeaderTemplate, next.Shards[i], uint16(i), uint16(next.DataShards))
-					if len(resultData) == dataLength+RtpHeaderLength {
-						slog.Debug("通过fec修复数据，并放入通道", slog.Int("channel", sc.ChannelId))
-					}
-
+					resultData = RebuildRtpPacket(next.HeaderTemplate, next.Shards[i], uint16(i), uint16(next.DataShards))
 				} else {
 					resultData = next.Packets[i].Payload //直接使用原始数据包，实现零拷贝
 				}

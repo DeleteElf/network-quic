@@ -341,11 +341,11 @@ func (s *Socket) GetFecDecodeInfo(data []byte) *FECPacket {
 				return nil
 			}
 			result.Total = int(result.Length) * result.DataShards
-			if int(result.Length) != len(result.Payload) {
-				slog.Debug("收到无效的 Rtp audio Datagram：数据包体大小不一致！", slog.Int("ChannelId", result.ChannelId),
-					slog.Any("包体长度", result.Length), slog.Int("包体实际长度", len(result.Payload)))
-				return nil
-			}
+			//if int(result.Length) != len(result.Payload) {
+			//	slog.Debug("收到无效的 Rtp audio Datagram：数据包体大小不一致！", slog.Int("ChannelId", result.ChannelId),
+			//		slog.Any("包体长度", result.Length), slog.Int("包体实际长度", len(result.Payload)))
+			//	return nil
+			//}
 		} else {
 			fecInfo := binary.BigEndian.Uint32(data[28:])
 			result.ChannelId = int(fecInfo & 0xF) // channelId: 占 4 位
@@ -366,11 +366,11 @@ func (s *Socket) GetFecDecodeInfo(data []byte) *FECPacket {
 			result.Payload = data
 			result.Length = uint16(len(result.Payload))
 			result.Total = result.DataShards * int(result.Length)
-			if int(result.Length) != len(result.Payload) {
-				slog.Debug("收到无效的 Rtp Datagram：数据包体大小不一致！", slog.Int("ChannelId", result.ChannelId),
-					slog.Any("包体长度", result.Length), slog.Int("包体实际长度", len(result.Payload)))
-				return nil
-			}
+			//if int(result.Length) != len(result.Payload) {
+			//	slog.Debug("收到无效的 Rtp Datagram：数据包体大小不一致！", slog.Int("ChannelId", result.ChannelId),
+			//		slog.Any("包体长度", result.Length), slog.Int("包体实际长度", len(result.Payload)))
+			//	return nil
+			//}
 		}
 	} else {
 		chnId := int(data[0])
@@ -562,11 +562,10 @@ func (s *Socket) SendFecDatagram(channelId int, idr bool, data []byte) (bool, er
 				return false, err
 			}
 		} else {
-			slog.Debug("fec 分片百分比为0")
+			//slog.Debug("fec 分片百分比为0")
 		}
 		for _, shard := range buffer {
 			_ = s.Conn.SendDatagram(shard) //发送处理好的数据
-
 		}
 	default: //数据分割模式
 		//frameIndex := atomic.AddUint64(&channel.FrameIndex, 1)

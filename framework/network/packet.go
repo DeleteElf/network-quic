@@ -98,22 +98,36 @@ func ConvertByteToVideoPacket(data []byte) (*VideoPacket, error) {
 //   - param dataShards	当前分组的数据分片总数
 //
 // return 返回构建好的新数据包
-func RebuildRtpPacket(buffer, header, data []byte, shardIndex, dataShards uint16) []byte {
-	copy(buffer[0:], header[0:RtpHeaderLength]) //仅拷贝加入rtp包即可
-	copy(buffer[RtpHeaderLength:], data)
-	switch header[1] {
-	case 0x61: //标准音频
-		sequenceNumber := binary.BigEndian.Uint16(buffer[2:])
-		sequenceNumber = sequenceNumber - sequenceNumber%dataShards + shardIndex //计算当前的包
+func RebuildRtpPacket(header, data []byte, shardIndex, dataShards uint16) []byte {
+	if header[1] == 0x61 || header[1] == 0x7f {
+		total := RtpHeaderLength + len(data)
+		buffer := make([]byte, total)               //循环中，且释放时机不好确定，不使用sync.Pool
+		copy(buffer[0:], header[0:RtpHeaderLength]) //仅拷贝加入rtp包即可
+		copy(buffer[RtpHeaderLength:], data)
+		switch header[1] {
+		case 0x61: //标准音频
+			sequenceNumber := binary.BigEndian.Uint16(buffer[2:])
+			sequenceNumber = sequenceNumber - sequenceNumber%dataShards + shardIndex //计算当前的包
+			binary.BigEndian.PutUint16(buffer[2:], sequenceNumber)
+		case 0x7f: //动态音频
+			sequenceNumber := binary.BigEndian.Uint16(buffer[14:]) - uint16(dataShards) + 1 + uint16(shardIndex)
+			buffer[1] = 0x61 //通过动态音频获取的 packetType为127，我们需要修改成97
+			binary.BigEndian.PutUint16(buffer[2:], sequenceNumber)
+		default: //其他都是视频 视频数据的rtp包数据都是一样的
+			//sequenceNumber 和 fec info 需要重建
+		}
+		return buffer
+	} else {
+		total := VideoHeaderLength + len(data)
+		buffer := make([]byte, total)                 //循环中，且释放时机不好确定，不使用sync.Pool
+		copy(buffer[0:], header[0:VideoHeaderLength]) //仅拷贝加入rtp包即可
+		copy(buffer[VideoHeaderLength:], data)
+		oldShardIndex := uint16((binary.LittleEndian.Uint32(buffer[28:]) & 0xFF000) >> 12)
+		binary.LittleEndian.PutUint32(buffer[28:], uint32(dataShards<<22|shardIndex<<12)) //FecInfo 增加idr信息、通道信息
+		sequenceNumber := binary.BigEndian.Uint16(buffer[2:]) - oldShardIndex + shardIndex
 		binary.BigEndian.PutUint16(buffer[2:], sequenceNumber)
-	case 0x7f: //动态音频
-		sequenceNumber := binary.BigEndian.Uint16(buffer[14:]) - uint16(dataShards) + 1 + uint16(shardIndex)
-		buffer[1] = 0x61 //通过动态音频获取的 packetType为127，我们需要修改成97
-		binary.BigEndian.PutUint16(buffer[2:], sequenceNumber)
-	default: //其他都是视频 视频数据的rtp包数据都是一样的
-
+		return buffer
 	}
-	return buffer[:RtpHeaderLength+len(data)]
 }
 
 //func ReadVideoPacket(data []byte, packet *VideoPacket) error {
