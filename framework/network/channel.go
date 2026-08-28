@@ -12,7 +12,6 @@ import (
 	"io"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -40,14 +39,16 @@ type FECPacket struct {
 
 // FECGroup 用于收集和组装同一 GroupID 的分片
 type FECGroup struct {
-	GroupID      uint64
-	DataShards   int
-	ParityShards int
-	Total        int
-	Shards       [][]byte // 槽位数组，长度为 DataShards + ParityShards
-	Packets      []*FECPacket
-	Received     int       // 当前已收到的有效分片数
-	CreatedAt    time.Time // 创建时间，用于过期清理
+	GroupID        uint64
+	DataShards     int
+	ParityShards   int
+	Total          int
+	Shards         [][]byte // 槽位数组，长度为 DataShards + ParityShards
+	Packets        []*FECPacket
+	HeaderTemplate []byte
+	Received       int       // 当前已收到的有效分片数
+	CreatedAt      time.Time // 创建时间，用于过期清理
+	ExpiredAt      time.Time
 }
 
 type StreamChannelOperating interface {
@@ -224,17 +225,29 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 		return fmt.Errorf("无效的shard索引: %d", packet.ShardIdx)
 	}
 	group, exists := sc.FecGroups[packet.GroupId]
+	isRtp := (packet.Payload[0] & 0x80) == 0x80
 	if !exists {
 		group = &FECGroup{
 			GroupID: packet.GroupId, DataShards: packet.DataShards, ParityShards: packet.ParityShards,
 			Shards: make([][]byte, totalShards), Packets: make([]*FECPacket, totalShards),
-			Total: packet.Total, Received: 0, CreatedAt: time.Now(),
+			Total: packet.Total, Received: 0, CreatedAt: time.Now(), ExpiredAt: time.Now().Add(50 * time.Millisecond),
+		}
+		if isRtp { //如果判定是rtp包，我们就需要预处理一下数据，方便后期补充rtp包
+			switch packet.Payload[1] {
+			case 0x61: //标准音频
+				group.HeaderTemplate = packet.Payload[:RtpHeaderLength]
+			case 0x7f: //动态音频
+				group.HeaderTemplate = packet.Payload[:AudioHeaderLength]
+			default: //其他都是视频 视频数据的rtp包数据都是一样的
+				group.HeaderTemplate = packet.Payload[:VideoHeaderLength]
+			}
 		}
 		sc.FecGroups[packet.GroupId] = group
 	}
 	if group.Shards[packet.ShardIdx] == nil {
-		if packet.Payload[0]&0x80 == 0x80 { //如果是rtp包
-			switch packet.Payload[1] {
+		group.Packets[packet.ShardIdx] = packet // 记录原始包指针
+		if isRtp {                              //如果是rtp包
+			switch packet.Payload[1] { //packetType
 			case 97:
 				group.Shards[packet.ShardIdx] = packet.Payload[RtpHeaderLength:]
 			case 127:
@@ -251,60 +264,85 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 	// 4. 判定：如果不满足解包门槛，继续等待下一个包
 	for {
 		next, exists := sc.FecGroups[sc.NextGroupId]
-		if exists {
-			if next.Received >= next.DataShards { //todo:存在了，数量够了，如果一直不够，什么时候检查超时？
-				// 关键优化：使用 ReconstructData 仅恢复数据分片，比 Reconstruct 省时省 CPU
-				encoder, err := sc.GetFecEncoder(next.DataShards, next.ParityShards)
-				if err != nil {
-					return fmt.Errorf("获取fec解码器出错: %w", err)
-				}
-				err = encoder.ReconstructData(next.Shards)
-				if err != nil {
-					return fmt.Errorf("fec解码出错: %w", err)
-				}
-				//slog.Debug("解码fec完成", slog.Int("groupId", int(next.GroupID)))
-				delete(sc.FecGroups, next.GroupID)
-				atomic.AddUint64(&sc.NextGroupId, 1)
-				if packet.Payload[0]&0x80 == 0x80 { //如果是rtp包
-					//这里可以根据特性进行拼接数据,如果考虑尽量零拷贝处理next.Shards
-					//现在这里有几个问题：
-					//1，我需要补充没有到的正规rtp 包的头信息 ，假设 一共6个数据包，数据分片是4个，当前到达的索引是 0,1,3,4，那么则需要补充序号是2的rtp头
-					//2，我需要告诉上层逻辑，fec已经处理完毕了
-					for i := 0; i < next.DataShards; i++ {
-						if next.Packets[i] == nil { //Payload 是携带rtp包头信息的完整数据缓存
-							//todo:这里重新构建缺失的头，那么取的数据可能是其他任意数据的头，因为，我们不知道是哪个
-						}
-						if sc.Channel != nil {
-							sc.Channel <- StreamChannelData{
-								ClientId:  sc.ClientId,
-								ChannelId: sc.ChannelId,
-								Offset:    0,
-								Data:      next.Packets[i].Payload, //直接使用原始数据包，实现零拷贝
-							}
-						}
+		if !exists {
+			break // 下一个组还没到来，退出循环
+		}
+		// 如果当前等待的组包数量还不足以解码，直接中断等待下一个网络包到达，切勿死循环！
+		if next.Received < next.DataShards {
+			if next.ExpiredAt.Before(time.Now()) { //如果已经过期，则不再等待，直接接收下一个
+				delete(sc.FecGroups, sc.NextGroupId)
+				sc.NextGroupId++ // 单协程处理下无需 atomic，若多协程则整体加锁
+				continue         //过期了，不论是否是关键帧，我们都丢弃了，那么还需要继续等待下一个
+			}
+			if isRtp && packet.Idr { //如果是rtp数据包，我们需要检查一下
+				if packet.GroupId > sc.NextGroupId {
+					for i := sc.NextGroupId; i < packet.GroupId; i++ { //循环删除当前帧之前的数据
+						delete(sc.FecGroups, i)
 					}
-				} else {
-					var frameBuf bytes.Buffer
-					err = encoder.Join(&frameBuf, next.Shards, next.Total)
-					if err != nil {
-						return err
-					}
-					if sc.Channel != nil {
-						sc.Channel <- StreamChannelData{
-							ClientId:  sc.ClientId,
-							ChannelId: sc.ChannelId,
-							Offset:    0,
-							Data:      frameBuf.Bytes(),
-						}
-					}
+					sc.NextGroupId = packet.GroupId //直接移动到当前帧
+					continue
 				}
-			} else {
+			}
+			break
+		}
+		// 关键优化：使用 ReconstructData 仅恢复数据分片，比 Reconstruct 省时省 CPU
+		encoder, err := sc.GetFecEncoder(next.DataShards, next.ParityShards)
+		if err != nil {
+			return fmt.Errorf("获取fec解码器出错: %w", err)
+		}
+		err = encoder.ReconstructData(next.Shards)
+		if err != nil {
+			return fmt.Errorf("fec解码出错: %w", err)
+		}
+		//slog.Debug("解码fec完成", slog.Int("groupId", int(next.GroupID)))
+		delete(sc.FecGroups, next.GroupID)
+		sc.NextGroupId++ // 单协程处理下无需 atomic，若多协程则整体加锁
+		//atomic.AddUint64(&sc.NextGroupId, 1)
+		if isRtp { //如果是rtp包
+			//这里可以根据特性进行拼接数据,如果考虑尽量零拷贝处理next.Shards
+			//现在这里有几个问题：
+			//1，我需要补充没有到的正规rtp 包的头信息 ，假设 一共6个数据包，数据分片是4个，当前到达的索引是 0,1,3,4，那么则需要补充序号是2的rtp头
+			//2，我需要告诉上层逻辑，fec已经处理完毕了
+			for i := 0; i < next.DataShards; i++ {
+				var resultData []byte
+				if next.Packets[i] == nil { //Payload 是携带rtp包头信息的完整数据缓存
+					//todo:这里重新构建缺失的头，那么取的数据可能是其他任意数据的头，因为，我们不知道是哪个
+					dataLength := len(next.Shards[i])
+					buffer := make([]byte, RtpHeaderLength+dataLength) //循环中，且释放时机不好确定，不使用sync.Pool
+					resultData = RebuildRtpPacket(buffer, next.HeaderTemplate, next.Shards[i], uint16(i), uint16(next.DataShards))
+					if len(resultData) == dataLength+RtpHeaderLength {
+						slog.Debug("通过fec修复数据，并放入通道", slog.Int("channel", sc.ChannelId))
+					}
 
+				} else {
+					resultData = next.Packets[i].Payload //直接使用原始数据包，实现零拷贝
+				}
+				if sc.Channel != nil {
+					sc.Channel <- StreamChannelData{
+						ClientId:  sc.ClientId,
+						ChannelId: sc.ChannelId,
+						Offset:    0,
+						Data:      resultData, //直接使用原始数据包，实现零拷贝
+					}
+				}
 			}
 		} else {
-			return nil
+			var frameBuf bytes.Buffer
+			err = encoder.Join(&frameBuf, next.Shards, next.Total)
+			if err != nil {
+				return err
+			}
+			if sc.Channel != nil {
+				sc.Channel <- StreamChannelData{
+					ClientId:  sc.ClientId,
+					ChannelId: sc.ChannelId,
+					Offset:    0,
+					Data:      frameBuf.Bytes(),
+				}
+			}
 		}
 	}
+	return nil
 }
 
 func (sc *StreamChannel) GetFecEncoder(dataShards, parityShards int) (reedsolomon.Encoder, error) {

@@ -1,6 +1,7 @@
 package network
 
 import (
+	"encoding/binary"
 	"errors"
 	"unsafe"
 )
@@ -86,6 +87,33 @@ func ConvertByteToVideoPacket(data []byte) (*VideoPacket, error) {
 		}, nil
 	}
 	return nil, errors.New("转换失败！")
+}
+
+// RebuildRtpPacket 通过fec解码后的数据重建rtp数据包
+//
+//   - param buffer 通过缓存池建立的数据缓存
+//   - param header 同个fec分组的其他数据头，用于样本恢复
+//   - param data fec解码后生成的顺序数据包，仅包含数据部分
+//   - param shardIndex	当前需要重建的数据包所在的分片索引
+//   - param dataShards	当前分组的数据分片总数
+//
+// return 返回构建好的新数据包
+func RebuildRtpPacket(buffer, header, data []byte, shardIndex, dataShards uint16) []byte {
+	copy(buffer[0:], header[0:RtpHeaderLength]) //仅拷贝加入rtp包即可
+	copy(buffer[RtpHeaderLength:], data)
+	switch header[1] {
+	case 0x61: //标准音频
+		sequenceNumber := binary.BigEndian.Uint16(buffer[2:])
+		sequenceNumber = sequenceNumber - sequenceNumber%dataShards + shardIndex //计算当前的包
+		binary.BigEndian.PutUint16(buffer[2:], sequenceNumber)
+	case 0x7f: //动态音频
+		sequenceNumber := binary.BigEndian.Uint16(buffer[14:]) - uint16(dataShards) + 1 + uint16(shardIndex)
+		buffer[1] = 0x61 //通过动态音频获取的 packetType为127，我们需要修改成97
+		binary.BigEndian.PutUint16(buffer[2:], sequenceNumber)
+	default: //其他都是视频 视频数据的rtp包数据都是一样的
+
+	}
+	return buffer[:RtpHeaderLength+len(data)]
 }
 
 //func ReadVideoPacket(data []byte, packet *VideoPacket) error {
