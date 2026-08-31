@@ -197,17 +197,13 @@ func (cli *Client) ConnectToNet(channelCount int, conn net.PacketConn, addr net.
 }
 
 func (cli *Client) Send(channelId int, data []byte) (bool, error) {
-	return cli.SendWithIdr(channelId, false, data)
 
-}
-
-func (cli *Client) SendWithIdr(channelId int, idr bool, data []byte) (bool, error) {
 	if cli.IsClosed {
 		return false, errors.New("client is closed")
 	}
 	if cli.Socket == nil {
 		return false, errors.New("socket is null")
 	}
-	return cli.Socket.SendWithIdr(channelId, idr, data)
+	return cli.Socket.Send(channelId, data)
 
 }

@@ -3,6 +3,7 @@ package network
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"github.com/DeleteElf/zero-net/framework"
@@ -279,13 +280,14 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 			}
 			if isRtp && packet.Idr { //如果是rtp数据包，我们需要检查一下
 				if packet.GroupId > sc.NextGroupId {
+					if sc.ChannelId == 2 {
+						slog.Debug("帧接收新的关键帧，跳到！", slog.Int("channel", sc.ChannelId), slog.Any("groupId", packet.GroupId))
+					}
 					for i := sc.NextGroupId; i < packet.GroupId; i++ { //循环删除当前帧之前的数据
 						delete(sc.FecGroups, i)
+						slog.Debug("清除到下个关键帧直接的缓存数据，快速追帧！", slog.Any("groupId", i))
 					}
 					sc.NextGroupId = packet.GroupId //直接移动到当前帧
-					if sc.ChannelId == 2 {
-						slog.Debug("帧接收新的关键帧，跳到！", slog.Int("channel", sc.ChannelId), slog.Any("goupId", sc.NextGroupId))
-					}
 					continue
 				}
 			}
@@ -303,21 +305,38 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 		//slog.Debug("解码fec完成", slog.Int("groupId", int(next.GroupID)))
 		delete(sc.FecGroups, next.GroupID)
 		sc.NextGroupId++ // 单协程处理下无需 atomic，若多协程则整体加锁
-		if sc.ChannelId == 2 {
-			slog.Debug("解码成功！", slog.Int("channel", sc.ChannelId))
-		}
+		//if sc.ChannelId == 2 {
+		//	slog.Debug("解码成功！", slog.Int("channel", sc.ChannelId))
+		//}
 		if isRtp { //如果是rtp包
 			//这里可以根据特性进行拼接数据,如果考虑尽量零拷贝处理next.Shards
 			//现在这里有几个问题：
 			//1，我需要补充没有到的正规rtp 包的头信息 ，假设 一共6个数据包，数据分片是4个，当前到达的索引是 0,1,3,4，那么则需要补充序号是2的rtp头
 			//2，我需要告诉上层逻辑，fec已经处理完毕了
+			isVideo := next.Packets[0].Payload[1] != 0x61 && next.Packets[0].Payload[1] != 0x7f
 			for i := 0; i < next.DataShards; i++ {
 				var resultData []byte
 				if next.Packets[i] == nil { //Payload 是携带rtp包头信息的完整数据缓存
 					//todo:这里重新构建缺失的头，那么取的数据可能是其他任意数据的头，因为，我们不知道是哪个
 					resultData = RebuildRtpPacket(next.HeaderTemplate, next.Shards[i], uint16(i), uint16(next.DataShards))
-				} else {
+				} else { //清除fecPercentage的数据
+					if isVideo {
+						oldFecInfo := binary.LittleEndian.Uint32(next.Packets[i].Payload[28:])
+						binary.LittleEndian.PutUint32(next.Packets[i].Payload[28:32], oldFecInfo&^(0x7F<<4))
+					}
+					//next.Packets[i].Payload[30] = next.Packets[i].Payload[30] & 0xF8 //清除fecPercentage的数据
+					//next.Packets[i].Payload[31] = next.Packets[i].Payload[31] & 0xF  //清除fecPercentage的数据
 					resultData = next.Packets[i].Payload //直接使用原始数据包，实现零拷贝
+				}
+				if isVideo { //重新组织标志位
+					binary.LittleEndian.PutUint32(resultData[16:], uint32(binary.BigEndian.Uint16(resultData[2:]))<<8)
+					resultData[24] = 0x1
+					if i == 0 {
+						resultData[24] = 0x5
+					}
+					if i == next.DataShards-1 {
+						resultData[24] = 0x3
+					}
 				}
 				if sc.Channel != nil {
 					sc.Channel <- StreamChannelData{

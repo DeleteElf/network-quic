@@ -319,7 +319,7 @@ func ClientChannelReceive(chnIdx C.int, data *C.NetworkData) C.int {
 }
 
 //export ClientChannelSend
-func ClientChannelSend(chnIdx C.int, idr C.int, data *C.NetworkData) C.int {
+func ClientChannelSend(chnIdx C.int, data *C.NetworkData) C.int {
 	if data == nil {
 		return C.ErrorParam
 	}
@@ -327,7 +327,7 @@ func ClientChannelSend(chnIdx C.int, idr C.int, data *C.NetworkData) C.int {
 		slog.Warn("请先连接服务端！")
 		return C.ErrorContext
 	}
-	success, err := clientCtx.SendWithIdr(int(chnIdx), int(idr) == 1, FromBytes(data))
+	success, err := clientCtx.Send(int(chnIdx), FromBytes(data))
 	if err != nil {
 		//slog.Error("客户端发送数据发生错误", slog.Any("err", err))
 		return C.Error
@@ -470,7 +470,7 @@ func ServerSocketClose(clientId *C.char) C.int {
 }
 
 //export ServerSocketSend
-func ServerSocketSend(clientId *C.char, chnIdx C.int, idr C.int, data *C.NetworkData) C.int {
+func ServerSocketSend(clientId *C.char, chnIdx C.int, data *C.NetworkData) C.int {
 	if data == nil {
 		return C.ErrorParam
 	}
@@ -486,7 +486,7 @@ func ServerSocketSend(clientId *C.char, chnIdx C.int, idr C.int, data *C.Network
 	if sock == nil {
 		return C.ErrorSocket
 	}
-	success, err := sock.SendWithIdr(int(chnIdx), int(idr) == 1, FromBytes(data))
+	success, err := sock.Send(int(chnIdx), FromBytes(data))
 	if err != nil {
 		return C.ErrorClose
 	}
@@ -518,7 +518,7 @@ func ServerSocketReceive(data *C.ClientData) C.int {
 		break //正式工作
 	}
 	if currentBuffer == nil {
-		count := len(socketMap) * 3
+		count := len(socketMap) * 4
 		channelCaseList := make([]reflect.SelectCase, count)
 		index := 0
 		for _, sock := range socketMap {

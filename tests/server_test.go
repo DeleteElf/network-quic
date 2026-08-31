@@ -62,7 +62,7 @@ func messageHandler(svr *server.Server, sock *network.Socket, channelIndex int) 
 					slog.Int("数据长度:", len(data)), slog.String("msg", temp))
 				if svr.QuicConfig.EnableDatagrams && sock.StreamConfigs[channelIndex].EnableFec {
 					sock.StreamChannels[channelIndex].FrameIndex = uint64(i + 10)
-					_, err = sock.SendFecDatagram(channelIndex, false, data) //这里我们模拟强制乱序，接收重组
+					_, err = sock.SendFecDatagram(channelIndex, data) //这里我们模拟强制乱序，接收重组
 				} else {
 					_, err = sock.Send(channelIndex, data)
 				}

@@ -149,7 +149,7 @@ func fecMessageHandler(sock *network.Socket, channelIndex int) {
 						//	Ssrc:           0,
 						//}
 						time += 5
-						sock.SendFecDatagram(channelIndex, false, buffer)
+						sock.SendFecDatagram(channelIndex, buffer)
 					}
 				}
 

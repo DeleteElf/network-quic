@@ -189,9 +189,6 @@ func (s *Socket) ReceiveDataToBuffer(channelId int) (bool, error) {
 }
 
 func (s *Socket) Send(channelId int, data []byte) (bool, error) {
-	return s.SendWithIdr(channelId, false, data)
-}
-func (s *Socket) SendWithIdr(channelId int, idr bool, data []byte) (bool, error) {
 	if s.IsClosed {
 		return false, errors.New("socket is closed")
 	}
@@ -204,7 +201,7 @@ func (s *Socket) SendWithIdr(channelId int, idr bool, data []byte) (bool, error)
 	channel := s.StreamChannels[channelId]
 	config := s.StreamConfigs[channelId]
 	if config.EnableFec && len(data) > s.FecLimitPacketSize {
-		return s.SendFecDatagram(channelId, idr, data)
+		return s.SendFecDatagram(channelId, data)
 	} else {
 		return channel.Send(data)
 	}
@@ -347,7 +344,7 @@ func (s *Socket) GetFecDecodeInfo(data []byte) *FECPacket {
 			//	return nil
 			//}
 		} else {
-			fecInfo := binary.BigEndian.Uint32(data[28:])
+			fecInfo := binary.LittleEndian.Uint32(data[28:])
 			result.ChannelId = int(fecInfo & 0xF) // channelId: 占 4 位
 			if result.ChannelId < 0 || result.ChannelId >= s.ChannelCount {
 				slog.Debug("收到无效的 Datagram：通道超出范围！", slog.Int("ChannelId", result.ChannelId))
@@ -393,12 +390,11 @@ func (s *Socket) GetFecDecodeInfo(data []byte) *FECPacket {
 		}
 		result.ChannelId = chnId
 		result.GroupId = binary.BigEndian.Uint64(data[1:9])
-		result.Idr = isIdr
-		result.ShardIdx = int(data[10])
-		result.DataShards = int(data[11])
-		result.ParityShards = int(data[12])
-		result.Total = int(binary.BigEndian.Uint32(data[13:17]))
-		result.Length = binary.BigEndian.Uint16(data[17:FecPacketHeaderLength])
+		result.ShardIdx = int(data[9])
+		result.DataShards = int(data[10])
+		result.ParityShards = int(data[11])
+		result.Total = int(binary.BigEndian.Uint32(data[12:16]))
+		result.Length = binary.BigEndian.Uint16(data[16:FecPacketHeaderLength])
 		result.Payload = data[FecPacketHeaderLength:]
 		//slog.Debug("收到的数据包", slog.Int("channelId", chnId), slog.Int("total", result.Total),
 		//	slog.Int("currentLength", int(result.Length)), slog.Int("dataLength", len(data)))
@@ -412,10 +408,7 @@ func (s *Socket) GetFecDecodeInfo(data []byte) *FECPacket {
 	return result
 }
 
-func (s *Socket) SendFecDatagram(channelId int, idr bool, data []byte) (bool, error) {
-	if channelId == 0 {
-		slog.Debug("收到意料外的数据包", slog.Int("ChannelId", channelId), slog.Any("长度", len(data)))
-	}
+func (s *Socket) SendFecDatagram(channelId int, data []byte) (bool, error) {
 	dataSize := len(data)  //通过包的长度，动态计算分片，这里总是取上整！
 	if dataSize > 351900 { //计算255个分片  每个分片 1380的极限大小
 		slog.Warn("发送的数据包大小超过 351900")
@@ -434,6 +427,9 @@ func (s *Socket) SendFecDatagram(channelId int, idr bool, data []byte) (bool, er
 		}
 
 		channel.SharedShards[index] = data[RtpHeaderLength:dataSize]
+		if data[0]&0x80 != 0x80 {
+			slog.Debug("发送的数据包不是合格的rtp包,audio data")
+		}
 		_ = s.Conn.SendDatagram(data) //发送处理好的数据
 		if index == config.DataShards-1 {
 			encoder, err := channel.GetFecEncoder(config.DataShards, config.ParityShards)
@@ -470,6 +466,9 @@ func (s *Socket) SendFecDatagram(channelId int, idr bool, data []byte) (bool, er
 				audioFecPacket.FecHeader.BaseSequenceNumber = lastRtp.SequenceNumber
 				audioFecPacket.FecHeader.Ssrc = lastRtp.Ssrc
 				audioFecPacket.FecHeader.PayloadType = 97
+				if channel.ParityShards[i][0]&0x80 != 0x80 {
+					slog.Debug("发送的数据包不是合格的rtp包,audio parity")
+				}
 				_ = s.Conn.SendDatagram(channel.ParityShards[i][:dataSize]) //发送处理好的数据
 			}
 		}
@@ -478,6 +477,7 @@ func (s *Socket) SendFecDatagram(channelId int, idr bool, data []byte) (bool, er
 		blockSize := int(s.StreamConfigs[channelId].FecPacketSize)
 		firstPacketHeader := (*VideoPacketHeader)(unsafe.Pointer(&data[0]))
 		fecPercentage := int(firstPacketHeader.Packet.FecInfo >> 4 & 0xff)
+		idrData := int(firstPacketHeader.Packet.FecInfo >> 11 & 0x1)
 		lowSeq := firstPacketHeader.Packet.StreamPacketIndex >> 8
 		ssrc := binary.BigEndian.Uint32(data[8:]) //bits.ReverseBytes32(firstPacketHeader.Rtp.Ssrc)
 		if s.FecPacketIndex[ssrc] == nil {
@@ -502,10 +502,6 @@ func (s *Socket) SendFecDatagram(channelId int, idr bool, data []byte) (bool, er
 			buffer[dataShards-1] = (*bufPtr)[:blockSize]
 			clear(buffer[dataShards-1])
 		}
-		idrData := 0
-		if idr {
-			idrData = 1
-		}
 		for i := 0; i < dataShards; i++ {
 			offset := i * blockSize
 			if i == dataShards-1 && pad { //如果是最后一个，并且需要pad时，我们进行补零操作
@@ -517,8 +513,8 @@ func (s *Socket) SendFecDatagram(channelId int, idr bool, data []byte) (bool, er
 
 			binary.BigEndian.PutUint32(buffer[i][16:], packetIndex) //StreamPacketIndex
 			//这个结构 支持fecPercentage最大127，channelId最大15
-			binary.BigEndian.PutUint32(buffer[i][28:], uint32(dataShards<<22|i<<12|idrData<<11|fecPercentage<<4|channelId)) //FecInfo 增加idr信息、通道信息
-			binary.BigEndian.PutUint16(buffer[i][2:], uint16(lowSeq+uint32(i)))                                             //SequenceNumber
+			binary.LittleEndian.PutUint32(buffer[i][28:], uint32(dataShards<<22|i<<12|idrData<<11|fecPercentage<<4|channelId)) //FecInfo 增加idr信息、通道信息
+			binary.BigEndian.PutUint16(buffer[i][2:], uint16(lowSeq+uint32(i)))                                                //SequenceNumber
 		}
 		if fecPercentage != 0 {
 			usedBuffers := make([]*[]byte, 0, parityShards)
@@ -537,9 +533,9 @@ func (s *Socket) SendFecDatagram(channelId int, idr bool, data []byte) (bool, er
 				packetHeader := (*VideoPacketHeader)(unsafe.Pointer(&buffer[i][0]))
 
 				packetHeader.Packet.FrameIndex = firstPacketHeader.Packet.FrameIndex
-				binary.BigEndian.PutUint32(buffer[i][16:], packetIndex)                                                         //StreamPacketIndex
-				binary.BigEndian.PutUint32(buffer[i][28:], uint32(dataShards<<22|i<<12|idrData<<11|fecPercentage<<4|channelId)) //FecInfo 增加idr信息、通道信息
-				binary.BigEndian.PutUint16(buffer[i][2:], uint16(lowSeq+uint32(i)))                                             //SequenceNumber
+				binary.BigEndian.PutUint32(buffer[i][16:], packetIndex)                                                            //StreamPacketIndex
+				binary.LittleEndian.PutUint32(buffer[i][28:], uint32(dataShards<<22|i<<12|idrData<<11|fecPercentage<<4|channelId)) //FecInfo 增加idr信息、通道信息
+				binary.BigEndian.PutUint16(buffer[i][2:], uint16(lowSeq+uint32(i)))                                                //SequenceNumber
 				packetHeader.Packet.MultiFecBlocks = firstPacketHeader.Packet.MultiFecBlocks
 				packetHeader.Packet.MultiFecFlags = 0
 
@@ -564,7 +560,12 @@ func (s *Socket) SendFecDatagram(channelId int, idr bool, data []byte) (bool, er
 		} else {
 			//slog.Debug("fec 分片百分比为0")
 		}
-		for _, shard := range buffer {
+		for index, shard := range buffer {
+			if shard[0]&0x80 != 0x80 {
+				slog.Debug("发送的数据包不是合格的rtp包", slog.Int("数据长度", length),
+					slog.Int("DataShards", dataShards), slog.Int("ParityShards", parityShards),
+					slog.Int("index", index))
+			}
 			_ = s.Conn.SendDatagram(shard) //发送处理好的数据
 		}
 	default: //数据分割模式
@@ -591,13 +592,13 @@ func (s *Socket) SendFecDatagram(channelId int, idr bool, data []byte) (bool, er
 			return false, err
 		}
 		for index, shard := range shards {
-			_ = s.sendFecShardDatagram(channelId, channel.FrameIndex, idr, index, dataSize, targetDataShards, targetParityShards, shard)
+			_ = s.sendFecShardDatagram(channelId, channel.FrameIndex, index, dataSize, targetDataShards, targetParityShards, shard)
 		}
 	}
 	return true, nil
 }
 
-func (s *Socket) sendFecShardDatagram(channelId int, frameIndex uint64, idr bool, index, total, dataShards, parityShards int, data []byte) error {
+func (s *Socket) sendFecShardDatagram(channelId int, frameIndex uint64, index, total, dataShards, parityShards int, data []byte) error {
 	length := len(data)
 	// 1. 从 Pool 获取一块已有的内存 (0 分配)
 	bufPtr := s.PacketPool.Get().(*[]byte)
@@ -606,16 +607,11 @@ func (s *Socket) sendFecShardDatagram(channelId int, frameIndex uint64, idr bool
 	packet := (*bufPtr)[:FecPacketHeaderLength+length]
 	packet[0] = byte(channelId)
 	binary.BigEndian.PutUint64(packet[1:], frameIndex)
-	if idr {
-		packet[9] = byte(1)
-	} else {
-		packet[9] = byte(0)
-	}
-	packet[10] = byte(index)
-	packet[11] = byte(dataShards)
-	packet[12] = byte(parityShards)
-	binary.BigEndian.PutUint32(packet[13:], uint32(total))
-	binary.BigEndian.PutUint16(packet[17:], uint16(length))
+	packet[9] = byte(index)
+	packet[10] = byte(dataShards)
+	packet[11] = byte(parityShards)
+	binary.BigEndian.PutUint32(packet[12:], uint32(total))
+	binary.BigEndian.PutUint16(packet[16:], uint16(length))
 	copy(packet[FecPacketHeaderLength:], data)
 	//slog.Debug("发送的数据包", slog.Int("channelId", channelId), slog.Int("total", total),
 	//	slog.Int("currentLength", length), slog.Int("dataLength", len(packet)))
