@@ -518,7 +518,10 @@ func ServerSocketReceive(data *C.ClientData) C.int {
 		break //正式工作
 	}
 	if currentBuffer == nil {
-		count := len(socketMap) * 4
+		count := 0
+		for _, sock := range socketMap {
+			count += sock.ChannelCount
+		}
 		channelCaseList := make([]reflect.SelectCase, count)
 		index := 0
 		for _, sock := range socketMap {
