@@ -278,7 +278,7 @@ func (s *Socket) HandleChannelStreamDatagram() {
 			err = sc.FecDecode(packet)
 			if err != nil {
 				slog.Error("解码fec过程发生错误", slog.Any("err", err))
-				return
+				continue
 			}
 		}
 	}
