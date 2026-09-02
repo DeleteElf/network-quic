@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"encoding/binary"
 	"fmt"
 	"github.com/DeleteElf/zero-net/client"
 	"github.com/DeleteElf/zero-net/framework/network"
@@ -10,7 +11,6 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/qlog"
 	"log/slog"
-	"math/bits"
 	"strconv"
 	"testing"
 	"time"
@@ -134,20 +134,12 @@ func fecMessageHandler(sock *network.Socket, channelIndex int) {
 				time := uint32(0)
 				buffer := make([]byte, 664)
 				for j := 0; j < 5; j++ {
-					sock.StreamChannels[1].FecGroups[0].FrameIndex = uint64(j)
+					sock.StreamChannels[channelIndex].FecGroups[0].FrameIndex = uint64(j)
 					for i := 0; i < 4; i++ {
-						rtp, _ := network.ConvertByteToRtpPacket(buffer)
-						rtp.Header = 0x80
-						rtp.PacketType = 0x0061
-						rtp.SequenceNumber = bits.ReverseBytes16(uint16(j*4 + i))
-						rtp.Timestamp = bits.ReverseBytes32(time)
-						//network.RtpPacket{
-						//	Header:         0x80,
-						//	PacketType:     0x0061,
-						//	SequenceNumber: bits.ReverseBytes16(1),
-						//	Timestamp:      bits.ReverseBytes32(time),
-						//	Ssrc:           0,
-						//}
+						buffer[0] = network.RtpHeader
+						buffer[1] = 0x61
+						binary.BigEndian.PutUint16(buffer[2:], uint16(j*4+i))
+						binary.BigEndian.PutUint32(buffer[4:], time)
 						time += 5
 						sock.SendFecDatagram(channelIndex, buffer)
 					}
@@ -163,24 +155,23 @@ func fecMessageHandler(sock *network.Socket, channelIndex int) {
 				percentage := 30
 				for i := 0; i < data_shards; i++ {
 					buf := buffer[i*blockSize : (i+1)*blockSize]
-					packet, _ := network.ConvertByteToVideoPacket(buf)
-					packet.Header.Rtp.Header = 0x80
-					packet.Header.Rtp.PacketType = 1
-					packet.Header.Rtp.SequenceNumber = bits.ReverseBytes16(uint16(i))
-					packet.Header.Rtp.Timestamp = bits.ReverseBytes32(uint32(time.Now().UnixMilli()))
-					packet.Header.Rtp.Ssrc = bits.ReverseBytes32(0)
+					buf[0] = network.VideoHeader
+					buf[1] = 1
+					binary.BigEndian.PutUint16(buf[2:], uint16(i))
+					binary.BigEndian.PutUint32(buf[4:], uint32(time.Now().UnixMilli()))
+					//binary.BigEndian.PutUint32(buf[8:], 0)
 
-					packet.Header.Packet.StreamPacketIndex = 1 << 8
-					packet.Header.Packet.FrameIndex = 1
-					packet.Header.Packet.Flags = 0x1
-					packet.Header.Packet.MultiFecFlags = 0x10
-					packet.Header.Packet.MultiFecBlocks = uint8((blockIndex << 4) | ((fec_blocks_needed - 1) << 6))
-					packet.Header.Packet.FecInfo = uint32(i<<12 | data_shards<<22 | percentage<<4)
+					binary.LittleEndian.PutUint32(buf[12:], uint32(1<<8))
+					binary.BigEndian.PutUint32(buf[16:], 1)
+					buf[24] = 0x1
+					buf[26] = 0x10
+					buf[27] = uint8((blockIndex << 4) | ((fec_blocks_needed - 1) << 6))
+					binary.LittleEndian.PutUint32(buf[28:], uint32(i<<12|data_shards<<22|percentage<<4))
 					if i == 0 {
-						packet.Header.Packet.Flags |= 0x4
+						buf[24] |= 0x4
 					}
 					if i == data_shards-1 {
-						packet.Header.Packet.Flags |= 0x2
+						buf[24] |= 0x2
 					}
 					//_, _ = network.WriteVideoPacket(packet, buf)
 					//shards[i] = buf
@@ -198,7 +189,7 @@ func fecMessageHandler(sock *network.Socket, channelIndex int) {
 				data := []byte(temp)
 				slog.Debug("正在向客户端发送fec数据包", slog.Int("channelId", currentBuffer.ChannelId),
 					slog.Int("数据长度:", len(data)), slog.String("msg", temp))
-				sock.StreamChannels[0].FecGroups[0].FrameIndex = uint64(index)
+				sock.StreamChannels[channelIndex].FecGroups[0].FrameIndex = uint64(index)
 				_, err = sock.Send(channelIndex, data)
 				if err != nil {
 					return
@@ -212,7 +203,7 @@ func fecMessageHandler(sock *network.Socket, channelIndex int) {
 				//if svr.QuicConfig.EnableDatagrams {
 				//	_, err = sock.SendFecDatagram(channelIndex, uint64(i+10), false, data) //这里我们模拟强制乱序，接收重组
 				//} else {
-				sock.StreamChannels[0].FecGroups[0].FrameIndex = uint64(i + 10)
+				sock.StreamChannels[channelIndex].FecGroups[0].FrameIndex = uint64(i + 10)
 				_, err = sock.Send(channelIndex, data)
 				//}
 				if err != nil {
@@ -258,8 +249,11 @@ func TestFecServer(t *testing.T) {
 				if i != 0 {
 					sock.StreamConfigs[i].SetStreamType(network.StreamType(i)) //设置通道媒体类型
 				} else {
-					sock.StreamConfigs[i].SetStreamType(network.StreamType(2)) //强制启动文本的fec
+					//sock.StreamConfigs[i].SetStreamType(network.StreamType(1)) //强制启动文本的fec
 					sock.StreamConfigs[i].Type = network.StreamType(i)
+					sock.StreamConfigs[i].EnableFec = true
+					sock.StreamConfigs[i].DataShards = 4
+					sock.StreamConfigs[i].ParityShards = 2
 				}
 				sock.StreamConfigs[i].FecPacketSize = testServer.FecBlockSize
 				go fecMessageHandler(sock, i)

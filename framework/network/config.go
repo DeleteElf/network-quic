@@ -10,9 +10,9 @@ type StreamConfig struct {
 	//是否启用Fec功能
 	EnableFec bool
 	//数据分片，仅当上层不是标准rtp数据包时，因没有提供fecInfo才用得到，否则优先考虑rtp包内协议
-	DataShards int
+	DataShards uint8
 	//奇偶碎片，仅当上层不是标准rtp数据包时，因没有提供fecInfo才用得到，否则优先考虑rtp包内协议
-	ParityShards int
+	ParityShards uint8
 
 	FecPacketSize uint16
 }

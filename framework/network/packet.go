@@ -7,14 +7,59 @@ import (
 )
 
 const (
-	FecPacketHeaderLength    = 18
+	FecPacketHeaderLength    = 32
 	FecLimitPacketSize       = 100
 	NetMtuPacketSize         = 1400
 	VideoHeaderLength        = 32
 	AudioHeaderLength        = 24
 	RtpHeaderLength          = 12
 	NvidiaPacketHeaderLength = 16
+	// RtpHeader 普通rtp标准头
+	RtpHeader = 0x80
+	// RtpHeaderFlagExtension rtp头携带了扩展的信息
+	RtpHeaderFlagExtension = 0x10
+	// VideoHeader rtp头携带扩展信息后的头信息
+	VideoHeader = RtpHeader | RtpHeaderFlagExtension
+
+	CustomFecHeader   = 0x81
+	CustomMessageType = 0x11
 )
+
+// FecPacketHeader 自定义分Fec数据包
+type FecPacketHeader struct {
+	//数据头类型
+	Header uint8
+	//数据类型
+	Type uint8
+	//通道的编号，主要用于路由分发，1个字节
+	ChannelId uint8
+	//同步源id
+	Ssrc uint8
+	//如果涉及多分块，则存在一帧内，多个group id,起始位置4
+	FrameId uint16
+	//数据包时间,起始位置6
+	Timestamp uint64
+	//分组的编号，主要用于重组，8个字节，考虑到可能会播放很久,GroupId并不等于FrameIndex，一个数据包可能被拆成多个分组,起始位置14
+	GroupId uint64
+	//是否关键帧，如果不是关键帧，则只能依赖超时来跳过
+	Idr uint8
+	//shard的索引 1个字节
+	ShardIdx uint8
+	//核心数据分片数
+	DataShards uint8
+	//fec矩阵分片数
+	ParityShards uint8
+	//数据总长度,起始位置26
+	Total uint32
+	//数据包体长度 2个字节,起始位置30
+	Length uint16
+}
+
+type FecPacket struct {
+	Header FecPacketHeader
+	//数据内容载体
+	Payload []byte
+}
 
 type RtpPacket struct {
 	Header         uint8
@@ -41,13 +86,10 @@ type VideoPacketHeader struct {
 }
 
 type VideoPacket struct {
-	Header  *VideoPacketHeader
+	Header  VideoPacketHeader
 	Payload []byte // 直接用 slice 存放后续的二进制数据
 }
 
-type AudioPacket struct {
-	Rtp RtpPacket
-}
 type AudioFecHeader struct {
 	FecShardIndex      uint8
 	PayloadType        uint8
@@ -59,19 +101,65 @@ type AudioFecHeader struct {
 type AudioFecPacket struct {
 	Rtp       RtpPacket
 	FecHeader AudioFecHeader
+	Payload   []byte
 }
+
+var RtpPacketTooShort = errors.New("Rtp数据包长度不足，转换失败")
 
 // ConvertByteToRtpPacket 将数据直接转成RtpPacket结构，要求数据结构对齐，修改结构变量即修改数据变量，windows这里会默认执行Little-Endian
 func ConvertByteToRtpPacket(data []byte) (*RtpPacket, error) {
-	if len(data) >= RtpHeaderLength {
-		return (*RtpPacket)(unsafe.Pointer(&data[0])), nil
+	if len(data) < RtpHeaderLength {
+		return nil, RtpPacketTooShort
 	}
-	return nil, errors.New("转换失败！")
+	var p RtpPacket
+	p.Header = data[0]
+	p.PacketType = data[1]
+	p.SequenceNumber = binary.BigEndian.Uint16(data[2:4])
+	p.Timestamp = binary.BigEndian.Uint32(data[4:8])
+	p.Ssrc = binary.BigEndian.Uint32(data[8:12])
+	return &p, nil
 }
 
 func ConvertByteToAudioFecPacket(data []byte) (*AudioFecPacket, error) {
-	if len(data) >= AudioHeaderLength {
-		return (*AudioFecPacket)(unsafe.Pointer(&data[0])), nil
+	if len(data) < AudioHeaderLength {
+		return nil, RtpPacketTooShort
+	}
+	return &AudioFecPacket{
+		Rtp: RtpPacket{
+			Header:         data[0],
+			PacketType:     data[1],
+			SequenceNumber: binary.BigEndian.Uint16(data[2:4]),
+			Timestamp:      binary.BigEndian.Uint32(data[4:8]),
+			Ssrc:           binary.BigEndian.Uint32(data[8:12]),
+		},
+		FecHeader: AudioFecHeader{
+			FecShardIndex:      data[12],
+			PayloadType:        data[13],
+			BaseSequenceNumber: binary.BigEndian.Uint16(data[14:16]),
+			BaseTimestamp:      binary.BigEndian.Uint32(data[16:20]),
+			Ssrc:               binary.BigEndian.Uint32(data[20:24]),
+		},
+		Payload: data[24:],
+	}, nil
+}
+
+func ConvertByteToFecPacketHeader(data []byte) (*FecPacketHeader, error) {
+	if len(data) >= FecPacketHeaderLength {
+		var h FecPacketHeader
+		h.Header = data[0]
+		h.Type = data[1]
+		h.ChannelId = data[2]
+		h.Ssrc = data[3]
+		h.FrameId = binary.BigEndian.Uint16(data[4:6])
+		h.Timestamp = binary.BigEndian.Uint64(data[6:14])
+		h.GroupId = binary.BigEndian.Uint64(data[14:22])
+		h.Idr = data[22]
+		h.ShardIdx = data[23]
+		h.DataShards = data[24]
+		h.ParityShards = data[25]
+		h.Total = binary.BigEndian.Uint32(data[26:30])
+		h.Length = binary.BigEndian.Uint16(data[30:32])
+		return &h, nil
 	}
 	return nil, errors.New("转换失败！")
 }
@@ -80,13 +168,43 @@ func ConvertByteToAudioFecPacket(data []byte) (*AudioFecPacket, error) {
 func ConvertByteToVideoPacket(data []byte) (*VideoPacket, error) {
 	if len(data) >= VideoHeaderLength {
 		return &VideoPacket{
-			// 1. 强转 Header：修改 pkt.Header.Rtp.Header 会直接修改 data[0]
-			Header: (*VideoPacketHeader)(unsafe.Pointer(&data[0])),
-			// 2. 截取 Payload：修改 pkt.Payload[0] 会直接修改 data[32]
+			Header: VideoPacketHeader{
+				Rtp: RtpPacket{
+					Header:         data[0],
+					PacketType:     data[1],
+					SequenceNumber: binary.BigEndian.Uint16(data[2:4]),
+					Timestamp:      binary.BigEndian.Uint32(data[4:8]),
+					Ssrc:           binary.BigEndian.Uint32(data[8:12]),
+				},
+				Reserved: [4]byte{data[12], data[13], data[14], data[15]},
+				Packet: NvidiaVideoPacket{
+					StreamPacketIndex: binary.LittleEndian.Uint32(data[16:20]),
+					FrameIndex:        binary.BigEndian.Uint32(data[20:24]),
+					Flags:             data[24],
+					ExtraFlags:        data[25],
+					MultiFecFlags:     data[26],
+					MultiFecBlocks:    data[27],
+					FecInfo:           binary.LittleEndian.Uint32(data[28:32]),
+				},
+			},
 			Payload: data[VideoHeaderLength:],
 		}, nil
 	}
 	return nil, errors.New("转换失败！")
+}
+
+func ConvertToByte(p unsafe.Pointer, size uintptr) []byte {
+	// 转换指针类型并生成 slice，使用零拷贝
+	//return (*[1 << 30]byte)(p)[:size:size] //旧的写法
+	return unsafe.Slice((*byte)(p), size) //1.17之后的新写法
+}
+
+func ConvertObjectToByte[T any](t *T) []byte {
+	if t == nil {
+		return nil
+	}
+	return unsafe.Slice((*byte)(unsafe.Pointer(t)), unsafe.Sizeof(*t))
+	//return ConvertToByte(unsafe.Pointer(t))
 }
 
 // RebuildRtpPacket 通过fec解码后的数据重建rtp数据包

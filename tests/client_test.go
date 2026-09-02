@@ -46,7 +46,7 @@ func receiveHandler(cli *client.Client, channelIndex int) {
 func TestClient(t *testing.T) {
 	utils.InitLog(slog.LevelDebug, nil)                       //初始化日志
 	cli := client.NewClient("192.168.199.22:10001", "test01") //尝试连接本机服务
-	cli.SupportFec = true
+	cli.SupportFec = false
 	cli.QuicConfig = &quic.Config{
 		//MaxIncomingStreams:      0xffffffffffff,   // 最大默认stream输入，默认100
 		HandshakeIdleTimeout:    5 * time.Second,          // 默认5s

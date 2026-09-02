@@ -98,7 +98,7 @@ var testServer *server.Server
 func TestServer(t *testing.T) {
 	utils.InitLog(slog.LevelDebug, nil)                     //初始化日志
 	testServer = server.NewServerByAddress("0.0.0.0:10001") //尝试连接本机服务
-	testServer.SupportFec = true
+	testServer.SupportFec = false
 	for {
 		if restart {
 			time.Sleep(1 * time.Second)

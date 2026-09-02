@@ -57,7 +57,7 @@ func NewServer(conn net.PacketConn, isAgent bool) *Server {
 	}
 	svr.FecBlockSize = network.NetMtuPacketSize
 	//svr.FecPercentage = 30
-	//svr.MinRequiredFecPackets = 2
+	svr.FecMinRequiredPackets = 2
 	svr.NetConn = conn
 	svr.SetOnCloseHandler(svr)
 	return svr
