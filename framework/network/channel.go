@@ -13,13 +13,29 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// FECPacket Fec数据包,包头长度 12字节
-type FECPacket struct {
+type FecGroupsMap struct {
+	Groups      map[uint64]*FecGroup //仅用于解码
+	NextGroupId uint64               //仅用于解码
+	FrameIndex  uint64               //仅用于编码
+}
+
+func NewFecGroupsMap() *FecGroupsMap {
+	return &FecGroupsMap{
+		Groups:      make(map[uint64]*FecGroup),
+		NextGroupId: 0,
+		FrameIndex:  0,
+	}
+}
+
+// FecPacket Fec数据包,包头长度 12字节
+type FecPacket struct {
 	//通道的编号，主要用于路由分发，1个字节
 	ChannelId int
+	Ssrc      uint32
 	//分组的编号，主要用于重组，8个字节，考虑到可能会播放很久,GroupId并不等于FrameIndex，一个数据包可能被拆成多个分组
 	GroupId uint64
 	Idr     bool
@@ -38,14 +54,14 @@ type FECPacket struct {
 	Payload []byte
 }
 
-// FECGroup 用于收集和组装同一 GroupID 的分片
-type FECGroup struct {
+// FecGroup 用于收集和组装同一 GroupID 的分片
+type FecGroup struct {
 	GroupID        uint64
 	DataShards     int
 	ParityShards   int
 	Total          int
 	Shards         [][]byte // 槽位数组，长度为 DataShards + ParityShards
-	Packets        []*FECPacket
+	Packets        []*FecPacket
 	HeaderTemplate []byte
 	Received       int       // 当前已收到的有效分片数
 	CreatedAt      time.Time // 创建时间，用于过期清理
@@ -69,19 +85,19 @@ type StreamChannelData struct {
 type MessageChannelCallbackFunc func(string, int)
 
 type StreamChannel struct {
-	Channel       chan StreamChannelData
-	ClientId      string
-	ChannelId     int
-	Cancel        context.CancelFunc
-	Done          bool
-	Buffer        *StreamChannelData
-	Stream        *quic.Stream
-	FrameIndex    uint64
-	FecEncoders   map[string]reedsolomon.Encoder
-	FecGroups     map[uint64]*FECGroup
-	SharedShards  [][]byte
-	ParityShards  [][]byte
-	NextGroupId   uint64
+	Channel   chan StreamChannelData
+	ClientId  string
+	ChannelId int
+	Cancel    context.CancelFunc
+	Done      bool
+	Buffer    *StreamChannelData
+	Stream    *quic.Stream
+	//FrameIndex    uint64
+	FecEncoders  map[string]reedsolomon.Encoder
+	FecGroups    map[uint32]*FecGroupsMap
+	SharedShards [][]byte
+	ParityShards [][]byte
+	//NextGroupId   uint64
 	lockEncoders  sync.Mutex
 	lockFecGroups sync.Mutex
 
@@ -100,16 +116,21 @@ type StreamChannel struct {
 // return:通道实例
 func NewStreamChannel(id string, index int) *StreamChannel {
 	slog.Debug("正在创建通道", slog.String("id", id), slog.Int("ChannelId", index))
+	cacheCount := 2
+	if index >= 2 {
+		cacheCount = 60
+	}
 	sc := &StreamChannel{
-		Channel:     make(chan StreamChannelData),
+		Channel:     make(chan StreamChannelData, cacheCount),
 		ClientId:    id,
 		ChannelId:   index,
-		FecGroups:   make(map[uint64]*FECGroup), //初始化空的分组队列
+		FecGroups:   make(map[uint32]*FecGroupsMap), //初始化空的分组队列
 		FecEncoders: make(map[string]reedsolomon.Encoder),
 		CloseableObject: framework.CloseableObject{
 			IsClosed: false,
 		},
 	}
+	sc.FecGroups[0] = NewFecGroupsMap() //初始化一个组
 	sc.SetOnCloseHandler(sc)
 	return sc
 }
@@ -220,17 +241,23 @@ func (sc *StreamChannel) Send(data []byte) (bool, error) {
 	return err == nil, err
 }
 
-func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
+func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 	totalShards := packet.DataShards + packet.ParityShards
 	if packet.ShardIdx >= totalShards {
 		return fmt.Errorf("无效的shard索引: %d", packet.ShardIdx)
 	}
-	group, exists := sc.FecGroups[packet.GroupId]
+	g, exists := sc.FecGroups[packet.Ssrc]
+	if !exists {
+		g = NewFecGroupsMap()
+		sc.FecGroups[packet.Ssrc] = g
+		atomic.AddUint64(&g.NextGroupId, 1)
+	}
+	group, exists := g.Groups[packet.GroupId]
 	isRtp := (packet.Payload[0] & 0x80) == 0x80
 	if !exists {
-		group = &FECGroup{
+		group = &FecGroup{
 			GroupID: packet.GroupId, DataShards: packet.DataShards, ParityShards: packet.ParityShards,
-			Shards: make([][]byte, totalShards), Packets: make([]*FECPacket, totalShards),
+			Shards: make([][]byte, totalShards), Packets: make([]*FecPacket, totalShards),
 			Total: packet.Total, Received: 0, CreatedAt: time.Now(), ExpiredAt: time.Now().Add(50 * time.Millisecond),
 		}
 		if isRtp { //如果判定是rtp包，我们就需要预处理一下数据，方便后期补充rtp包
@@ -243,7 +270,7 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 				group.HeaderTemplate = packet.Payload[:VideoHeaderLength]
 			}
 		}
-		sc.FecGroups[packet.GroupId] = group
+		sc.FecGroups[packet.Ssrc].Groups[packet.GroupId] = group
 	}
 	if group.Shards[packet.ShardIdx] == nil {
 		group.Packets[packet.ShardIdx] = packet // 记录原始包指针
@@ -264,7 +291,7 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 	//slog.Debug("收到一个新的数据包", slog.Any("packet", packet), slog.Any("fecGroup", group))
 	// 4. 判定：如果不满足解包门槛，继续等待下一个包
 	for {
-		next, exists := sc.FecGroups[sc.NextGroupId]
+		next, exists := g.Groups[g.NextGroupId]
 		if !exists {
 			break // 下一个组还没到来，退出循环
 		}
@@ -272,22 +299,22 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 		if next.Received < next.DataShards {
 			if next.ExpiredAt.Before(time.Now()) { //如果已经过期，则不再等待，直接接收下一个
 				if sc.ChannelId == 2 {
-					slog.Debug("帧接收超时丢弃！", slog.Int("channel", sc.ChannelId), slog.Any("goupId", sc.NextGroupId))
+					slog.Debug("帧接收超时丢弃！", slog.Int("channel", sc.ChannelId), slog.Any("groupId", g.NextGroupId))
 				}
-				delete(sc.FecGroups, sc.NextGroupId)
-				sc.NextGroupId++ // 单协程处理下无需 atomic，若多协程则整体加锁
-				continue         //过期了，不论是否是关键帧，我们都丢弃了，那么还需要继续等待下一个
+				delete(g.Groups, g.NextGroupId)
+				g.NextGroupId++ // 单协程处理下无需 atomic，若多协程则整体加锁
+				continue        //过期了，不论是否是关键帧，我们都丢弃了，那么还需要继续等待下一个
 			}
 			if isRtp && packet.Idr { //如果是rtp数据包，我们需要检查一下
-				if packet.GroupId > sc.NextGroupId {
+				if packet.GroupId > g.NextGroupId {
 					if sc.ChannelId == 2 {
 						slog.Debug("帧接收新的关键帧，跳到！", slog.Int("channel", sc.ChannelId), slog.Any("groupId", packet.GroupId))
 					}
-					for i := sc.NextGroupId; i < packet.GroupId; i++ { //循环删除当前帧之前的数据
-						delete(sc.FecGroups, i)
+					for i := g.NextGroupId; i < packet.GroupId; i++ { //循环删除当前帧之前的数据
+						delete(g.Groups, i)
 						slog.Debug("清除到下个关键帧直接的缓存数据，快速追帧！", slog.Any("groupId", i))
 					}
-					sc.NextGroupId = packet.GroupId //直接移动到当前帧
+					g.NextGroupId = packet.GroupId //直接移动到当前帧
 					continue
 				}
 			}
@@ -303,10 +330,10 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 			return fmt.Errorf("fec解码出错: %w", err)
 		}
 		//slog.Debug("解码fec完成", slog.Int("groupId", int(next.GroupID)))
-		delete(sc.FecGroups, next.GroupID)
-		sc.NextGroupId++ // 单协程处理下无需 atomic，若多协程则整体加锁
+		delete(g.Groups, next.GroupID)
+		g.NextGroupId++ // 单协程处理下无需 atomic，若多协程则整体加锁
 		//if sc.ChannelId == 2 {
-		//	slog.Debug("解码成功！", slog.Int("channel", sc.ChannelId))
+		//	slog.Debug("解码成功！", slog.Int("channel", sc.ChannelId), slog.Any("ssrc", packet.Ssrc))
 		//}
 		if isRtp { //如果是rtp包
 			//这里可以根据特性进行拼接数据,如果考虑尽量零拷贝处理next.Shards
@@ -320,24 +347,14 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 					//todo:这里重新构建缺失的头，那么取的数据可能是其他任意数据的头，因为，我们不知道是哪个
 					resultData = RebuildRtpPacket(next.HeaderTemplate, next.Shards[i], uint16(i), uint16(next.DataShards))
 				} else { //清除fecPercentage的数据
-					if isVideo {
-						oldFecInfo := binary.LittleEndian.Uint32(next.Packets[i].Payload[28:])
-						binary.LittleEndian.PutUint32(next.Packets[i].Payload[28:32], oldFecInfo&^(0x7F<<4))
-					}
-					//next.Packets[i].Payload[30] = next.Packets[i].Payload[30] & 0xF8 //清除fecPercentage的数据
-					//next.Packets[i].Payload[31] = next.Packets[i].Payload[31] & 0xF  //清除fecPercentage的数据
 					resultData = next.Packets[i].Payload //直接使用原始数据包，实现零拷贝
 				}
-				if isVideo { //重新组织标志位
+				if isVideo { //因为我们已经处理过fec了，必须告诉上层没有fec分片数据了
+					oldFecInfo := binary.LittleEndian.Uint32(resultData[28:])
+					binary.LittleEndian.PutUint32(resultData[28:32], oldFecInfo&^(0x7F<<4))
 					binary.LittleEndian.PutUint32(resultData[16:], uint32(binary.BigEndian.Uint16(resultData[2:]))<<8)
-					resultData[24] = 0x1
-					if i == 0 {
-						resultData[24] = 0x5
-					}
-					if i == next.DataShards-1 {
-						resultData[24] = 0x3
-					}
 				}
+
 				if sc.Channel != nil {
 					sc.Channel <- StreamChannelData{
 						ClientId:  sc.ClientId,
@@ -353,6 +370,7 @@ func (sc *StreamChannel) FecDecode(packet *FECPacket) error {
 			if err != nil {
 				return err
 			}
+			//slog.Debug("fec重组了一条数据", slog.Any("frame", frameBuf.String()))
 			if sc.Channel != nil {
 				sc.Channel <- StreamChannelData{
 					ClientId:  sc.ClientId,

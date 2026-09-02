@@ -126,15 +126,16 @@ func RebuildRtpPacket(header, data []byte, shardIndex, dataShards uint16) []byte
 		oldShardIndex := uint16((oldFecInfo >> 12) & 0x3FF)
 		newFecInfo := (oldFecInfo & 0xFFF) | (uint32(dataShards) << 22) | (uint32(shardIndex) << 12) // 清空高 20 位（保留低 12 位 0x00000FFF），并填入新的 dataShards 和 shardIndex
 		binary.LittleEndian.PutUint32(buffer[28:], newFecInfo)
-		//fecInfo := binary.LittleEndian.Uint32(buffer[28:])
-		//oldShardIndex := uint16((fecInfo >> 12) & 0x3FF) //    uint16((fecInfo & 0xFF000) >> 12)
-		//fecPercentage := (fecInfo >> 4) & 0x7F
-		//idrData := (fecInfo >> 11) & 0x1
-		//channelId := fecInfo & 0xF
-		////dataShards<<22|i<<12|idrData<<11|fecPercentage<<4|channelId
-		//binary.LittleEndian.PutUint32(buffer[28:], uint32(dataShards)<<22|uint32(shardIndex)<<12|idrData<<11|fecPercentage<<4|channelId) //FecInfo 增加idr信息、通道信息
 		sequenceNumber := binary.BigEndian.Uint16(buffer[2:]) - oldShardIndex + shardIndex
 		binary.BigEndian.PutUint16(buffer[2:], sequenceNumber)
+		//补充算法生成的数据包是否是开头和结束的标志
+		buffer[24] = 0x1
+		if shardIndex == 0 {
+			buffer[24] = 0x5
+		}
+		if shardIndex == dataShards-1 {
+			buffer[24] = 0x3
+		}
 		return buffer
 	}
 }

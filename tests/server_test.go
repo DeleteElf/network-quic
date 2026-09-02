@@ -50,6 +50,7 @@ func messageHandler(svr *server.Server, sock *network.Socket, channelIndex int) 
 				data := []byte(temp)
 				slog.Debug("正在向客户端发送fec数据包", slog.Int("channelId", currentBuffer.ChannelId),
 					slog.Int("数据长度:", len(data)), slog.String("msg", temp))
+				sock.StreamChannels[channelIndex].FecGroups[0].FrameIndex = uint64(index)
 				_, err = sock.Send(channelIndex, data)
 				if err != nil {
 					return
@@ -61,7 +62,7 @@ func messageHandler(svr *server.Server, sock *network.Socket, channelIndex int) 
 				slog.Debug("正在向客户端发送fec数据包", slog.Int("channelId", currentBuffer.ChannelId),
 					slog.Int("数据长度:", len(data)), slog.String("msg", temp))
 				if svr.QuicConfig.EnableDatagrams && sock.StreamConfigs[channelIndex].EnableFec {
-					sock.StreamChannels[channelIndex].FrameIndex = uint64(i + 10)
+					sock.StreamChannels[channelIndex].FecGroups[0].FrameIndex = uint64(i + 10)
 					_, err = sock.SendFecDatagram(channelIndex, data) //这里我们模拟强制乱序，接收重组
 				} else {
 					_, err = sock.Send(channelIndex, data)
