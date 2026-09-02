@@ -79,6 +79,7 @@ type Socket struct {
 	FecLimitPacketSize    int
 	FecMinRequiredPackets uint8
 	FecPacketIndex        map[uint32]*uint32
+	LastSendTime          time.Time
 }
 
 func NewSocket(id string, channelCount int, packetSize uint16, onDisconnect SocketCallbackFunc) *Socket {
@@ -332,11 +333,6 @@ func (s *Socket) GetFecDecodeInfo(data []byte) *FecPacket {
 				return nil
 			}
 			result.Header.Total = uint32(result.Header.Length) * uint32(result.Header.DataShards)
-			//if int(result.Length) != len(result.Payload) {
-			//	slog.Debug("收到无效的 Rtp audio Datagram：数据包体大小不一致！", slog.Int("ChannelId", result.ChannelId),
-			//		slog.Any("包体长度", result.Length), slog.Int("包体实际长度", len(result.Payload)))
-			//	return nil
-			//}
 		} else {
 			slog.Debug("未支持的rtp数据包")
 		}
@@ -388,15 +384,18 @@ func (s *Socket) GetFecDecodeInfo(data []byte) *FecPacket {
 
 		result.Header.Total = binary.BigEndian.Uint32(data[26:])
 		result.Header.Length = binary.BigEndian.Uint16(data[30:])
-		result.Payload = data[FecPacketHeaderLength:]
-		if int(result.Header.Length) != len(result.Payload) {
-			slog.Debug("收到无效的Datagram,数据包体大小不一致！", slog.Any("ChannelId", result.Header.ChannelId),
-				slog.Any("包体长度", result.Header.Length), slog.Int("包体实际长度", len(result.Payload)),
-				slog.Any("data", data))
-			return nil
-		}
+		result.Payload = data
 	}
 	return result
+}
+
+func (s *Socket) SafeWaitMillisecond(timeout time.Duration) {
+	s.channelEditLock.Lock()
+	if s.LastSendTime.Add(timeout).After(time.Now()) {
+		time.Sleep(time.Millisecond)
+	}
+	s.LastSendTime = time.Now()
+	s.channelEditLock.Unlock()
 }
 
 func (s *Socket) SendFecDatagram(channelId int, data []byte) (bool, error) {
@@ -524,20 +523,10 @@ func (s *Socket) SendFecDatagram(channelId int, data []byte) (bool, error) {
 				buffer[i][26] = 0
 				shards[i] = buffer[i][VideoHeaderLength:blockSize]
 			}
-			//for i := 0; i < len(shards); i++ {
-			//	if len(shards[i]) != 1008 {
-			//		slog.Debug("编码fec过程发生shard大小错误", slog.Any("shard index", i),
-			//			slog.Any("shard length", len(shards[i])), slog.Any("blockSize", blockSize))
-			//	}
-			//}
 			encoder, err := channel.GetFecEncoder(dataShards, parityShards)
 			if err != nil {
 				return false, err
 			}
-			//if encoder == nil {
-			//	slog.Debug("编码fec过程发生 fec 编码器为空", slog.Any("dataShards", dataShards),
-			//		slog.Any("parityShards", parityShards), slog.Any("fecPercentage", fecPercentage))
-			//}
 			err = encoder.Encode(shards)
 
 			if err != nil {
@@ -549,6 +538,7 @@ func (s *Socket) SendFecDatagram(channelId int, data []byte) (bool, error) {
 		} else {
 			slog.Debug("fec 分片百分比为0")
 		}
+		s.SafeWaitMillisecond(time.Millisecond)
 		for index, shard := range buffer {
 			if shard[0] != VideoHeader {
 				slog.Debug("发送的数据包不是合格的rtp包", slog.Int("数据长度", length),
@@ -581,6 +571,7 @@ func (s *Socket) SendFecDatagram(channelId int, data []byte) (bool, error) {
 				slog.Any("err", err))
 			return false, err
 		}
+		s.SafeWaitMillisecond(time.Millisecond)
 		for index, shard := range shards {
 			_ = s.sendFecShardDatagram(channelId, uint16(channel.FecGroups[0].FrameIndex), channel.FecGroups[0].FrameIndex, index, dataSize, targetDataShards, targetParityShards, shard)
 		}
@@ -595,9 +586,11 @@ func (s *Socket) sendFecShardDatagram(channelId int, frameIndex uint16, groupId 
 	bufPtr := s.PacketPool.Get().(*[]byte)
 	defer s.PacketPool.Put(bufPtr) // 函数结束归还 Pool
 	buf := (*bufPtr)[:size]
+	clear(buf) //清除数据
 	buf[0] = CustomFecHeader
 	buf[1] = CustomMessageType
 	buf[2] = uint8(channelId)
+	buf[3] = uint8(0)
 	binary.BigEndian.PutUint16(buf[4:], frameIndex)
 	binary.BigEndian.PutUint64(buf[6:], uint64(time.Now().UnixMilli()))
 	binary.BigEndian.PutUint64(buf[14:], groupId)

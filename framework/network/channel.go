@@ -219,6 +219,9 @@ func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 	if packet.Header.ShardIdx >= totalShards {
 		return fmt.Errorf("无效的shard索引: %d", packet.Header.ShardIdx)
 	}
+	if packet.Header.Ssrc > 1 {
+		slog.Debug("无效的ssrc")
+	}
 	g, exists := sc.FecGroups[packet.Header.Ssrc]
 	if !exists {
 		g = NewFecGroupsMap()
@@ -249,8 +252,7 @@ func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 		sc.FecGroups[packet.Header.Ssrc].Groups[packet.Header.GroupId] = group
 	}
 	if group.Shards[packet.Header.ShardIdx] == nil {
-		group.Packets[packet.Header.ShardIdx] = packet // 记录原始包指针
-		if isRtp {                                     //如果是rtp包
+		if isRtp { //如果是rtp包
 			switch packet.Payload[1] { //packetType
 			case 97:
 				group.Shards[packet.Header.ShardIdx] = packet.Payload[RtpHeaderLength:]
@@ -260,8 +262,12 @@ func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 				group.Shards[packet.Header.ShardIdx] = packet.Payload[VideoHeaderLength:]
 			}
 		} else {
-			group.Shards[packet.Header.ShardIdx] = packet.Payload
+			//if int(packet.Header.Length) != len(packet.Payload) { //如果接收的数据包大小与传输大小不一致，则丢弃
+			//	return nil
+			//}
+			group.Shards[packet.Header.ShardIdx] = packet.Payload[FecPacketHeaderLength:]
 		}
+		group.Packets[packet.Header.ShardIdx] = packet // 记录原始包指针
 		group.Received++
 	}
 	//slog.Debug("收到一个新的数据包", slog.Any("packet", packet), slog.Any("fecGroup", group))
@@ -323,7 +329,7 @@ func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 				var resultData []byte
 				if next.Packets[i] == nil { //Payload 是携带rtp包头信息的完整数据缓存
 					//todo:这里重新构建缺失的头，那么取的数据可能是其他任意数据的头，因为，我们不知道是哪个
-					resultData = RebuildRtpPacket(next.HeaderTemplate, next.Shards[i], uint16(i), uint16(header.DataShards))
+					resultData = RebuildRtpPacket(next.HeaderTemplate, next.Shards[i], uint8(i), header.DataShards)
 				} else { //清除fecPercentage的数据
 					resultData = next.Packets[i].Payload //直接使用原始数据包，实现零拷贝
 				}

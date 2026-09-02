@@ -180,9 +180,10 @@ func fecMessageHandler(sock *network.Socket, channelIndex int) {
 			}
 		} else if msg == "hello,如果数据太短，我们在fec模式下，就会报错，谨记！！！" {
 			template := "这是一条测试数据，我们需要用来测试一下 fec的功能是否正常，因此，我们会不断地评价它！！！"
-			stringList := make([]string, 10)
+			count := 100
+			stringList := make([]string, count)
 			result := ""
-			for index := 0; index < 10; index++ {
+			for index := 0; index < count; index++ {
 				result = result + template
 				stringList[index] = result
 				temp := strconv.Itoa(index) + ":" + result
@@ -195,15 +196,15 @@ func fecMessageHandler(sock *network.Socket, channelIndex int) {
 					return
 				}
 			}
-			for i := 9; i >= 0; i-- {
-				temp := strconv.Itoa(i+10) + ":" + stringList[i]
+			for i := count - 1; i >= 0; i-- {
+				temp := strconv.Itoa(i+count) + ":" + stringList[i]
 				data := []byte(temp)
 				slog.Debug("正在向客户端发送fec数据包", slog.Int("channelId", currentBuffer.ChannelId),
 					slog.Int("数据长度:", len(data)), slog.String("msg", temp))
 				//if svr.QuicConfig.EnableDatagrams {
 				//	_, err = sock.SendFecDatagram(channelIndex, uint64(i+10), false, data) //这里我们模拟强制乱序，接收重组
 				//} else {
-				sock.StreamChannels[channelIndex].FecGroups[0].FrameIndex = uint64(i + 10)
+				sock.StreamChannels[channelIndex].FecGroups[0].FrameIndex = uint64(i + count)
 				_, err = sock.Send(channelIndex, data)
 				//}
 				if err != nil {

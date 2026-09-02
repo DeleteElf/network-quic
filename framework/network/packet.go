@@ -216,7 +216,7 @@ func ConvertObjectToByte[T any](t *T) []byte {
 //   - param dataShards	当前分组的数据分片总数
 //
 // return 返回构建好的新数据包
-func RebuildRtpPacket(header, data []byte, shardIndex, dataShards uint16) []byte {
+func RebuildRtpPacket(header, data []byte, shardIndex, dataShards uint8) []byte {
 	if header[1] == 0x61 || header[1] == 0x7f {
 		total := RtpHeaderLength + len(data)
 		buffer := make([]byte, total)               //循环中，且释放时机不好确定，不使用sync.Pool
@@ -225,7 +225,7 @@ func RebuildRtpPacket(header, data []byte, shardIndex, dataShards uint16) []byte
 		switch header[1] {
 		case 0x61: //标准音频
 			sequenceNumber := binary.BigEndian.Uint16(buffer[2:])
-			sequenceNumber = sequenceNumber - sequenceNumber%dataShards + shardIndex //计算当前的包
+			sequenceNumber = sequenceNumber - sequenceNumber%uint16(dataShards) + uint16(shardIndex) //计算当前的包
 			binary.BigEndian.PutUint16(buffer[2:], sequenceNumber)
 		case 0x7f: //动态音频
 			sequenceNumber := binary.BigEndian.Uint16(buffer[14:]) - uint16(dataShards) + 1 + uint16(shardIndex)
@@ -244,7 +244,7 @@ func RebuildRtpPacket(header, data []byte, shardIndex, dataShards uint16) []byte
 		oldShardIndex := uint16((oldFecInfo >> 12) & 0x3FF)
 		newFecInfo := (oldFecInfo & 0xFFF) | (uint32(dataShards) << 22) | (uint32(shardIndex) << 12) // 清空高 20 位（保留低 12 位 0x00000FFF），并填入新的 dataShards 和 shardIndex
 		binary.LittleEndian.PutUint32(buffer[28:], newFecInfo)
-		sequenceNumber := binary.BigEndian.Uint16(buffer[2:]) - oldShardIndex + shardIndex
+		sequenceNumber := binary.BigEndian.Uint16(buffer[2:]) - oldShardIndex + uint16(shardIndex)
 		binary.BigEndian.PutUint16(buffer[2:], sequenceNumber)
 		//补充算法生成的数据包是否是开头和结束的标志
 		buffer[24] = 0x1
