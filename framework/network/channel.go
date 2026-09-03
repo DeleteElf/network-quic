@@ -12,38 +12,10 @@ import (
 	"github.com/quic-go/quic-go"
 	"io"
 	"log/slog"
+	"math"
 	"sync"
-	"sync/atomic"
 	"time"
 )
-
-type FecGroupsMap struct {
-	Groups      map[uint64]*FecGroup //仅用于解码
-	NextGroupId uint64               //仅用于解码
-	FrameIndex  uint64               //仅用于编码
-	//仅用于静态解码
-	SharedShards [][]byte
-	//仅用于静态解码
-	ParityShards [][]byte
-}
-
-func NewFecGroupsMap() *FecGroupsMap {
-	return &FecGroupsMap{
-		Groups:      make(map[uint64]*FecGroup),
-		NextGroupId: 0,
-		FrameIndex:  0,
-	}
-}
-
-// FecGroup 用于收集和组装同一 GroupID 的分片
-type FecGroup struct {
-	HeaderSample   *FecPacketHeader
-	HeaderTemplate []byte
-	Shards         [][]byte // 槽位数组，长度为 DataShards + ParityShards
-	Packets        []*FecPacket
-	Received       uint8 // 当前已收到的有效分片数
-	ExpiredAt      time.Time
-}
 
 type StreamChannelOperating interface {
 	CreateChannels(count int)
@@ -104,7 +76,6 @@ func NewStreamChannel(id string, index int) *StreamChannel {
 		},
 	}
 	sc.FecGroups[0] = NewFecGroupsMap() //初始化一个组
-	atomic.AddUint64(&sc.FecGroups[0].NextGroupId, 1)
 	sc.SetOnCloseHandler(sc)
 	return sc
 }
@@ -225,7 +196,6 @@ func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 	if !exists {
 		g = NewFecGroupsMap()
 		sc.FecGroups[packet.Header.Ssrc] = g
-		atomic.AddUint64(&g.NextGroupId, 1)
 	}
 	group, exists := g.Groups[packet.Header.GroupId]
 	isRtp := packet.Payload[0] == RtpHeader || packet.Payload[0] == VideoHeader
@@ -283,11 +253,15 @@ func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 				continue        //过期了，不论是否是关键帧，我们都丢弃了，那么还需要继续等待下一个
 			}
 			if isRtp && header.Idr == 1 { //如果是rtp数据包，我们需要检查一下
-				if header.GroupId > g.NextGroupId {
+				if utils.IsBefore8(g.NextGroupId, header.GroupId) {
 					slog.Debug("帧接收新的关键帧，跳到！", slog.Int("channel", sc.ChannelId),
 						slog.Any("groupId", header.GroupId))
-					for i := g.NextGroupId; i < header.GroupId; i++ { //循环删除当前帧之前的数据
-						delete(g.Groups, i)
+					target := int(header.GroupId)
+					if header.GroupId < g.NextGroupId {
+						target = int(header.GroupId) + math.MaxUint8
+					}
+					for i := int(g.NextGroupId); i < target; i++ { //循环删除当前帧之前的数据
+						delete(g.Groups, uint8(i))
 					}
 					g.NextGroupId = header.GroupId //直接移动到当前帧
 					continue

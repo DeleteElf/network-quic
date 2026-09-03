@@ -8,6 +8,7 @@ import (
 	"github.com/DeleteElf/zero-net/framework/utils"
 	"github.com/quic-go/quic-go"
 	"log/slog"
+	"math"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -78,7 +79,7 @@ type Socket struct {
 	PacketPool            *sync.Pool
 	FecLimitPacketSize    int
 	FecMinRequiredPackets uint8
-	FecPacketIndex        map[uint32]*uint32
+	FecPacketIndex        map[uint8]uint8
 	LastSendTime          time.Time
 }
 
@@ -88,7 +89,7 @@ func NewSocket(id string, channelCount int, packetSize uint16, onDisconnect Sock
 		ChannelCount:   channelCount,
 		MtuPacketSize:  packetSize,
 		Context:        context.Background(),
-		FecPacketIndex: make(map[uint32]*uint32),
+		FecPacketIndex: make(map[uint8]uint8),
 	}
 	sock.IsClosed = false
 	sock.SetOnCloseHandler(sock)
@@ -321,17 +322,17 @@ func (s *Socket) GetFecDecodeInfo(data []byte) *FecPacket {
 				result.Header.Length = uint16(size - AudioHeaderLength)
 				fecShardIndex := data[12]
 				result.Header.ShardIdx = fecShardIndex + result.Header.DataShards
-				result.Header.GroupId = (uint64(sequenceNumber-uint16(fecShardIndex)-1) / uint64(result.Header.DataShards)) + 1
+				result.Header.GroupId = uint8(uint64(sequenceNumber-uint16(fecShardIndex)-1)/uint64(result.Header.DataShards)) + 1
 			} else {
 				result.Header.Length = uint16(size - RtpHeaderLength)
 				result.Header.ShardIdx = uint8(sequenceNumber % uint16(result.Header.DataShards))
-				result.Header.GroupId = (uint64(sequenceNumber) / uint64(result.Header.DataShards)) + 1
+				result.Header.GroupId = uint8(uint64(sequenceNumber)/uint64(result.Header.DataShards)) + 1
 			}
 			fecGroup := s.StreamChannels[result.Header.ChannelId].FecGroups[0]
-			if fecGroup.NextGroupId == 0 {
-				atomic.StoreUint64(&fecGroup.NextGroupId, result.Header.GroupId) //如果一直没开始，则开始立即使用最新的，丢弃之前的
-			}
-			if result.Header.GroupId < fecGroup.NextGroupId { //已经解码成功的Id就不要了
+			//if fecGroup.NextGroupId == 0 { //这里有一个问题，就是循环使用序号的问题
+			//	fecGroup.NextGroupId = result.Header.GroupId //如果一直没开始，则开始立即使用最新的，丢弃之前的
+			//}
+			if utils.IsBefore8(result.Header.GroupId, fecGroup.NextGroupId) { //已经解码成功的Id就不要了
 				return nil
 			}
 			result.Header.Total = uint32(result.Header.Length) * uint32(result.Header.DataShards)
@@ -358,19 +359,22 @@ func (s *Socket) GetFecDecodeInfo(data []byte) *FecPacket {
 		if !exists {
 			fecGroupMap = NewFecGroupsMap()
 			s.StreamChannels[result.Header.ChannelId].FecGroups[result.Header.Ssrc] = fecGroupMap
-			atomic.AddUint64(&fecGroupMap.NextGroupId, 1)
 		}
-		result.Header.GroupId = uint64(binary.BigEndian.Uint32(data[16:]))
+		result.Header.GroupId = data[19] //  uint64(binary.BigEndian.Uint32(data[16:]))
 
-		slog.Debug("step 20", slog.Any("ChannelId", result.Header.ChannelId), slog.Any("Ssrc", result.Header.Ssrc))
+		//slog.Debug("step 20", slog.Any("ChannelId", result.Header.ChannelId), slog.Any("Ssrc", result.Header.Ssrc))
 		nextGroupId := fecGroupMap.NextGroupId
-		if result.Header.GroupId < nextGroupId { //已经解码成功的Id就不要了
+		if utils.IsBefore8(result.Header.GroupId, nextGroupId) { //已经解码成功的Id就不要了
 			return nil
 		}
 		result.Header.Idr = uint8(fecInfo >> 11 & 0x1)                      //idr 1 位
 		if result.Header.Idr == 1 && result.Header.GroupId != nextGroupId { //如果是 关键帧，则移动当前数据到本帧，并丢弃前面的数据,执行追帧
-			for i := nextGroupId; i < result.Header.GroupId; i++ {
-				delete(fecGroupMap.Groups, i)
+			target := int(result.Header.GroupId)
+			if result.Header.GroupId < nextGroupId { //考虑溢出问题
+				target = int(result.Header.GroupId) + math.MaxUint8
+			}
+			for i := int(nextGroupId); i < target; i++ {
+				delete(fecGroupMap.Groups, uint8(i))
 			}
 			fecGroupMap.NextGroupId = result.Header.GroupId
 		}
@@ -398,16 +402,17 @@ func (s *Socket) GetFecDecodeInfo(data []byte) *FecPacket {
 			return nil
 		}
 		result.Header.Ssrc = data[3]
-		result.Header.FrameId = binary.BigEndian.Uint16(data[4:])
-		result.Header.Timestamp = binary.BigEndian.Uint64(data[6:])
-		result.Header.GroupId = binary.BigEndian.Uint64(data[14:])
+		result.Header.Idr = data[4]
+		result.Header.ShardIdx = data[5]
+		result.Header.DataShards = data[6]
+		result.Header.ParityShards = data[7]
+		result.Header.FrameId = binary.BigEndian.Uint64(data[8:])
+		result.Header.Timestamp = binary.BigEndian.Uint64(data[16:])
+		result.Header.Total = binary.BigEndian.Uint32(data[24:])
+		result.Header.Length = binary.BigEndian.Uint16(data[28:])
+		result.Header.GroupId = data[30]
 		result.Header.Idr = data[22]
-		result.Header.ShardIdx = data[23]
-		result.Header.DataShards = data[24]
-		result.Header.ParityShards = data[25]
 
-		result.Header.Total = binary.BigEndian.Uint32(data[26:])
-		result.Header.Length = binary.BigEndian.Uint16(data[30:])
 		result.Payload = data
 	}
 	return result
@@ -480,12 +485,15 @@ func (s *Socket) SendFecDatagram(channelId int, data []byte) (bool, error) {
 		fecInfo := binary.LittleEndian.Uint32(data[28:32])
 		fecPercentage := uint8(fecInfo >> 4 & 0x7f)
 		idrData := int(fecInfo >> 11 & 0x1)
-		lowSeq := binary.LittleEndian.Uint32(data[16:20]) >> 8
-		ssrc := binary.BigEndian.Uint32(data[8:]) //bits.ReverseBytes32(firstPacketHeader.Rtp.Ssrc)
-		if s.FecPacketIndex[ssrc] == nil {
-			s.FecPacketIndex[ssrc] = new(uint32)
+		lowSeq := binary.LittleEndian.Uint16(data[16:20]) >> 8
+		ssrc := uint8(binary.BigEndian.Uint32(data[8:])) //bits.ReverseBytes32(firstPacketHeader.Rtp.Ssrc)
+
+		if _, exists := s.FecPacketIndex[ssrc]; !exists {
+			s.FecPacketIndex[ssrc] = 0
 		}
-		packetIndex := atomic.AddUint32(s.FecPacketIndex[ssrc], 1)
+		s.FecPacketIndex[ssrc] = s.FecPacketIndex[ssrc] + 1
+		packetIndex := s.FecPacketIndex[ssrc]
+
 		pad := length%blockSize != 0 //是否需要补零
 		dataShards := uint8(utils.Ceil(length, blockSize))
 		parityShards := uint8(utils.Ceil(int(dataShards)*int(fecPercentage), 100))
@@ -513,8 +521,8 @@ func (s *Socket) SendFecDatagram(channelId int, data []byte) (bool, error) {
 				buffer[i] = data[offset : offset+blockSize] //取数据切片,实现零拷贝
 			}
 			shards[i] = buffer[i][VideoHeaderLength:blockSize] //取数据切片
-
-			binary.BigEndian.PutUint32(buffer[i][16:], packetIndex) //StreamPacketIndex
+			buffer[i][19] = packetIndex                        //将数据藏在 剩余协议位置里
+			//binary.BigEndian.PutUint32(buffer[i][16:], packetIndex) //StreamPacketIndex
 		}
 		if fecPercentage != 0 {
 			usedBuffers := make([]*[]byte, 0, parityShards)
@@ -533,8 +541,8 @@ func (s *Socket) SendFecDatagram(channelId int, data []byte) (bool, error) {
 				copy(buffer[i][:VideoHeaderLength], buffer[0][:VideoHeaderLength]) //拷贝头部数据
 				binary.LittleEndian.PutUint32(buffer[i][28:],
 					uint32(dataShards)<<22|uint32(i)<<12|uint32(idrData)<<11|uint32(fecPercentage)<<4|uint32(channelId)) //FecInfo 增加idr信息、通道信息
-				binary.BigEndian.PutUint16(buffer[i][2:], uint16(lowSeq+uint32(i))) //SequenceNumber
-				buffer[i][24] = 0                                                   //这个属性是什么并不重要
+				binary.BigEndian.PutUint16(buffer[i][2:], uint16(uint32(lowSeq)+uint32(i)))                              //SequenceNumber
+				buffer[i][24] = 0                                                                                        //这个属性是什么并不重要
 				buffer[i][26] = 0
 				shards[i] = buffer[i][VideoHeaderLength:blockSize]
 			}
@@ -590,14 +598,14 @@ func (s *Socket) SendFecDatagram(channelId int, data []byte) (bool, error) {
 		s.SafeWaitMillisecond(time.Millisecond)
 		for index, shard := range shards {
 			_ = s.sendFecShardDatagram(uint8(channelId), 0, 0, uint8(index),
-				targetDataShards, targetParityShards, uint16(frameIndex), frameIndex, uint32(dataSize), shard)
+				targetDataShards, targetParityShards, frameIndex, uint8(frameIndex), uint32(dataSize), shard)
 		}
 	}
 	return true, nil
 }
 
 func (s *Socket) sendFecShardDatagram(channelId, ssrc, idr, index, dataShards, parityShards uint8,
-	frameIndex uint16, groupId uint64, total uint32, data []byte) error {
+	frameIndex uint64, groupId uint8, total uint32, data []byte) error {
 	length := len(data)
 	size := FecPacketHeaderLength + length
 	// 1. 从 Pool 获取一块已有的内存 (0 分配)
@@ -609,15 +617,16 @@ func (s *Socket) sendFecShardDatagram(channelId, ssrc, idr, index, dataShards, p
 	buf[1] = CustomMessageType
 	buf[2] = channelId
 	buf[3] = ssrc
-	binary.BigEndian.PutUint16(buf[4:], frameIndex)
-	binary.BigEndian.PutUint64(buf[6:], uint64(time.Now().UnixMilli()))
-	binary.BigEndian.PutUint64(buf[14:], groupId)
-	buf[22] = idr
-	buf[23] = index
-	buf[24] = dataShards
-	buf[25] = parityShards
-	binary.BigEndian.PutUint32(buf[26:], total)
-	binary.BigEndian.PutUint16(buf[30:], uint16(length))
+	buf[4] = idr
+	buf[5] = index
+	buf[6] = dataShards
+	buf[7] = parityShards
+	binary.BigEndian.PutUint64(buf[8:], frameIndex)
+	binary.BigEndian.PutUint64(buf[16:], uint64(time.Now().UnixMilli()))
+	binary.BigEndian.PutUint32(buf[24:], total)
+	binary.BigEndian.PutUint16(buf[28:], uint16(length))
+	buf[30] = groupId
+
 	copy(buf[FecPacketHeaderLength:], data)
 
 	return s.Conn.SendDatagram(buf[:size])
