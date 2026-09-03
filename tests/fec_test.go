@@ -16,6 +16,13 @@ import (
 	"time"
 )
 
+func TestManageArray(t *testing.T) {
+	testMap := make(map[int]string)
+	for i := 0; i < 100; i++ {
+		delete(testMap, i)
+	}
+}
+
 func TestFecSimple(t *testing.T) {
 	utils.InitLog(slog.LevelDebug, nil)
 	encoder, _ := reedsolomon.New(4, 2)
@@ -47,64 +54,6 @@ func TestFecSimple(t *testing.T) {
 	slog.Debug("1111")
 }
 
-func TestFecClient(t *testing.T) {
-	utils.InitLog(slog.LevelDebug, nil)                       //初始化日志
-	cli := client.NewClient("192.168.199.22:10001", "test01") //尝试连接本机服务
-	cli.SupportFec = true
-	cli.FecBlockSize = 1040
-	cli.QuicConfig = &quic.Config{
-		//MaxIncomingStreams:      0xffffffffffff,   // 最大默认stream输入，默认100
-		HandshakeIdleTimeout:    5 * time.Second,          // 默认5s
-		MaxIdleTimeout:          10 * time.Second,         // 默认30s，我们这边设置成10秒
-		KeepAlivePeriod:         3 * time.Second,          // 建议是 MaxIdleTimeout 的一半，或者更小的值
-		InitialPacketSize:       network.NetMtuPacketSize, //当前最大数据包一个基础包的大小
-		DisablePathMTUDiscovery: false,
-		Allow0RTT:               true,
-		EnableDatagrams:         cli.SupportFec,
-		Tracer:                  qlog.DefaultConnectionTracer,
-	}
-	cli.OnSocketConnected = func(sock *network.Socket) {
-		for i := 0; i < sock.ChannelCount; i++ {
-			sock.StreamConfigs[i].SetStreamType(network.StreamType(i)) //设置通道媒体类型
-			sock.StreamConfigs[i].FecPacketSize = cli.FecBlockSize
-			if i == 0 {
-				sock.StreamConfigs[i].EnableFec = true
-				sock.StreamConfigs[i].DataShards = 4
-				sock.StreamConfigs[i].ParityShards = 2
-			}
-		}
-	}
-	err := cli.Connect(3, network.STREAM_NETWORK_UDP, func(sock *network.Socket) {
-		slog.Debug("socket已经断开===》！", slog.String("clientId", sock.Id))
-	}) //创建udp网络
-
-	if err != nil {
-		slog.Error("客户端连接失败", slog.Any("err", err))
-		return
-	}
-	slog.Info("客户端连接成功！", slog.Int("通道数", cli.Socket.ChannelCount))
-	for i := 0; i < cli.Socket.ChannelCount; i++ {
-		go receiveHandler(cli, i)
-	}
-	msg2 := "hello"
-	slog.Info("正在向通道2发送数据", slog.String("msg", msg2))
-	for i := 0; i < 2; i++ {
-		_, _ = cli.Socket.Send(i+1, []byte(msg2))
-	}
-	msg3 := "hello,如果数据太短，我们在fec模式下，就会报错，谨记！！！"
-	_, _ = cli.Socket.Send(0, []byte(msg3))
-	slog.Info("正在向通道1发送数据", slog.String("msg", msg3))
-	//time.Sleep(time.Second * 3) //等待3秒，等他们通讯完成再退出
-	for {
-		time.Sleep(time.Second * 6)
-		if cli.IsClosed || cli.Socket == nil || cli.Socket.IsClosed {
-			break
-		} else {
-			_, _ = cli.Socket.Ping(0)
-		}
-	}
-}
-
 func fecMessageHandler(sock *network.Socket, channelIndex int) {
 	for {
 		if sock.IsClosed {
@@ -134,7 +83,6 @@ func fecMessageHandler(sock *network.Socket, channelIndex int) {
 				time := uint32(0)
 				buffer := make([]byte, 664)
 				for j := 0; j < 5; j++ {
-					sock.StreamChannels[channelIndex].FecGroups[0].FrameIndex = uint64(j)
 					for i := 0; i < 4; i++ {
 						buffer[0] = network.RtpHeader
 						buffer[1] = 0x61
@@ -150,23 +98,24 @@ func fecMessageHandler(sock *network.Socket, channelIndex int) {
 				fec_blocks_needed := 1
 				blockIndex := 0
 				data_shards := 10
-				buffer := make([]byte, 10400)
+				buffer := make([]byte, 1040*data_shards)
 				//shards := make([][]byte, data_shards)
 				percentage := 30
+				currentTime := time.Now().UnixMilli()
 				for i := 0; i < data_shards; i++ {
 					buf := buffer[i*blockSize : (i+1)*blockSize]
 					buf[0] = network.VideoHeader
 					buf[1] = 1
-					binary.BigEndian.PutUint16(buf[2:], uint16(i))
-					binary.BigEndian.PutUint32(buf[4:], uint32(time.Now().UnixMilli()))
-					//binary.BigEndian.PutUint32(buf[8:], 0)
-
-					binary.LittleEndian.PutUint32(buf[12:], uint32(1<<8))
-					binary.BigEndian.PutUint32(buf[16:], 1)
-					buf[24] = 0x1
-					buf[26] = 0x10
-					buf[27] = uint8((blockIndex << 4) | ((fec_blocks_needed - 1) << 6))
-					binary.LittleEndian.PutUint32(buf[28:], uint32(i<<12|data_shards<<22|percentage<<4))
+					binary.BigEndian.PutUint16(buf[2:], uint16(i))           //序号
+					binary.BigEndian.PutUint32(buf[4:], uint32(currentTime)) //时间
+					binary.BigEndian.PutUint32(buf[8:], 0)                   //ssrc
+					//12-15 是空的
+					binary.LittleEndian.PutUint32(buf[16:], uint32(1<<8))                                             //StreamPacketIndex
+					binary.BigEndian.PutUint32(buf[20:], 1)                                                           //frameIndex
+					buf[24] = 0x1                                                                                     //FLAG
+					buf[26] = 0x10                                                                                    //fec数据分片标志
+					buf[27] = uint8((blockIndex << 4) | ((fec_blocks_needed - 1) << 6))                               //fec数据分片信息
+					binary.LittleEndian.PutUint32(buf[28:], uint32(i<<12|data_shards<<22|percentage<<4|channelIndex)) //fec info
 					if i == 0 {
 						buf[24] |= 0x4
 					}
@@ -190,7 +139,7 @@ func fecMessageHandler(sock *network.Socket, channelIndex int) {
 				data := []byte(temp)
 				slog.Debug("正在向客户端发送fec数据包", slog.Int("channelId", currentBuffer.ChannelId),
 					slog.Int("数据长度:", len(data)), slog.String("msg", temp))
-				sock.StreamChannels[channelIndex].FecGroups[0].FrameIndex = uint64(index)
+				//sock.StreamChannels[channelIndex].FecGroups[0].FrameIndex = uint64(index)
 				_, err = sock.Send(channelIndex, data)
 				if err != nil {
 					return
@@ -204,7 +153,7 @@ func fecMessageHandler(sock *network.Socket, channelIndex int) {
 				//if svr.QuicConfig.EnableDatagrams {
 				//	_, err = sock.SendFecDatagram(channelIndex, uint64(i+10), false, data) //这里我们模拟强制乱序，接收重组
 				//} else {
-				sock.StreamChannels[channelIndex].FecGroups[0].FrameIndex = uint64(i + count)
+				//sock.StreamChannels[channelIndex].FecGroups[0].FrameIndex = uint64(i + count)
 				_, err = sock.Send(channelIndex, data)
 				//}
 				if err != nil {
@@ -277,6 +226,64 @@ func TestFecServer(t *testing.T) {
 		slog.Debug("服务端退出监听！")
 		if !restart {
 			break
+		}
+	}
+}
+
+func TestFecClient(t *testing.T) {
+	utils.InitLog(slog.LevelDebug, nil)                       //初始化日志
+	cli := client.NewClient("192.168.199.22:10001", "test01") //尝试连接本机服务
+	cli.SupportFec = true
+	cli.FecBlockSize = 1040
+	cli.QuicConfig = &quic.Config{
+		//MaxIncomingStreams:      0xffffffffffff,   // 最大默认stream输入，默认100
+		HandshakeIdleTimeout:    5 * time.Second,          // 默认5s
+		MaxIdleTimeout:          10 * time.Second,         // 默认30s，我们这边设置成10秒
+		KeepAlivePeriod:         3 * time.Second,          // 建议是 MaxIdleTimeout 的一半，或者更小的值
+		InitialPacketSize:       network.NetMtuPacketSize, //当前最大数据包一个基础包的大小
+		DisablePathMTUDiscovery: false,
+		Allow0RTT:               true,
+		EnableDatagrams:         cli.SupportFec,
+		Tracer:                  qlog.DefaultConnectionTracer,
+	}
+	cli.OnSocketConnected = func(sock *network.Socket) {
+		for i := 0; i < sock.ChannelCount; i++ {
+			sock.StreamConfigs[i].SetStreamType(network.StreamType(i)) //设置通道媒体类型
+			sock.StreamConfigs[i].FecPacketSize = cli.FecBlockSize
+			if i == 0 {
+				sock.StreamConfigs[i].EnableFec = true
+				sock.StreamConfigs[i].DataShards = 4
+				sock.StreamConfigs[i].ParityShards = 2
+			}
+		}
+	}
+	err := cli.Connect(3, network.STREAM_NETWORK_UDP, func(sock *network.Socket) {
+		slog.Debug("socket已经断开===》！", slog.String("clientId", sock.Id))
+	}) //创建udp网络
+
+	if err != nil {
+		slog.Error("客户端连接失败", slog.Any("err", err))
+		return
+	}
+	slog.Info("客户端连接成功！", slog.Int("通道数", cli.Socket.ChannelCount))
+	for i := 0; i < cli.Socket.ChannelCount; i++ {
+		go receiveHandler(cli, i)
+	}
+	msg2 := "hello"
+	slog.Info("正在向通道2发送数据", slog.String("msg", msg2))
+	for i := 0; i < 2; i++ {
+		_, _ = cli.Socket.Send(i+1, []byte(msg2))
+	}
+	msg3 := "hello,如果数据太短，我们在fec模式下，就会报错，谨记！！！"
+	_, _ = cli.Socket.Send(0, []byte(msg3))
+	slog.Info("正在向通道1发送数据", slog.String("msg", msg3))
+	//time.Sleep(time.Second * 3) //等待3秒，等他们通讯完成再退出
+	for {
+		time.Sleep(time.Second * 6)
+		if cli.IsClosed || cli.Socket == nil || cli.Socket.IsClosed {
+			break
+		} else {
+			_, _ = cli.Socket.Ping(0)
 		}
 	}
 }

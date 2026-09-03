@@ -21,6 +21,10 @@ type FecGroupsMap struct {
 	Groups      map[uint64]*FecGroup //仅用于解码
 	NextGroupId uint64               //仅用于解码
 	FrameIndex  uint64               //仅用于编码
+	//仅用于静态解码
+	SharedShards [][]byte
+	//仅用于静态解码
+	ParityShards [][]byte
 }
 
 func NewFecGroupsMap() *FecGroupsMap {
@@ -58,19 +62,15 @@ type StreamChannelData struct {
 type MessageChannelCallbackFunc func(string, int)
 
 type StreamChannel struct {
-	Channel   chan StreamChannelData
-	ClientId  string
-	ChannelId int
-	Cancel    context.CancelFunc
-	Done      bool
-	Buffer    *StreamChannelData
-	Stream    *quic.Stream
-	//FrameIndex    uint64
-	FecEncoders  map[string]reedsolomon.Encoder
-	FecGroups    map[uint8]*FecGroupsMap
-	SharedShards [][]byte
-	ParityShards [][]byte
-	//NextGroupId   uint64
+	Channel       chan StreamChannelData
+	ClientId      string
+	ChannelId     int
+	Cancel        context.CancelFunc
+	Done          bool
+	Buffer        *StreamChannelData
+	Stream        *quic.Stream
+	FecEncoders   map[string]reedsolomon.Encoder
+	FecGroups     map[uint8]*FecGroupsMap
 	lockEncoders  sync.Mutex
 	lockFecGroups sync.Mutex
 
@@ -89,12 +89,12 @@ type StreamChannel struct {
 // return:通道实例
 func NewStreamChannel(id string, index int) *StreamChannel {
 	slog.Debug("正在创建通道", slog.String("id", id), slog.Int("ChannelId", index))
-	cacheCount := 2
-	if index >= 2 {
-		cacheCount = 60
-	}
+	//cacheCount := 2
+	//if index >= 2 {
+	//	cacheCount = 60
+	//}
 	sc := &StreamChannel{
-		Channel:     make(chan StreamChannelData, cacheCount),
+		Channel:     make(chan StreamChannelData),
 		ClientId:    id,
 		ChannelId:   index,
 		FecGroups:   make(map[uint8]*FecGroupsMap), //初始化空的分组队列
@@ -104,6 +104,7 @@ func NewStreamChannel(id string, index int) *StreamChannel {
 		},
 	}
 	sc.FecGroups[0] = NewFecGroupsMap() //初始化一个组
+	atomic.AddUint64(&sc.FecGroups[0].NextGroupId, 1)
 	sc.SetOnCloseHandler(sc)
 	return sc
 }
@@ -215,12 +216,10 @@ func (sc *StreamChannel) Send(data []byte) (bool, error) {
 }
 
 func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
+	//slog.Debug("fec开始解码", slog.Any("channel id", sc.ChannelId), slog.Any("ssrc", packet.Header.Ssrc), slog.Any("groupId", packet.Header.GroupId))
 	totalShards := packet.Header.DataShards + packet.Header.ParityShards
 	if packet.Header.ShardIdx >= totalShards {
 		return fmt.Errorf("无效的shard索引: %d", packet.Header.ShardIdx)
-	}
-	if packet.Header.Ssrc > 1 {
-		slog.Debug("无效的ssrc")
 	}
 	g, exists := sc.FecGroups[packet.Header.Ssrc]
 	if !exists {
@@ -232,7 +231,7 @@ func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 	isRtp := packet.Payload[0] == RtpHeader || packet.Payload[0] == VideoHeader
 	if !exists {
 		group = &FecGroup{
-			HeaderSample: &packet.Header, ExpiredAt: time.Now().Add(50 * time.Millisecond),
+			HeaderSample: &packet.Header, ExpiredAt: time.Now().Add(200 * time.Millisecond),
 			Shards: make([][]byte, totalShards), Packets: make([]*FecPacket, totalShards),
 			//GroupID: packet.Header.GroupId, DataShards: packet.Header.DataShards, ParityShards: packet.Header.ParityShards,
 			//Total: packet.Header.Total, Received: 0, CreatedAt: time.Now(),
@@ -262,9 +261,6 @@ func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 				group.Shards[packet.Header.ShardIdx] = packet.Payload[VideoHeaderLength:]
 			}
 		} else {
-			//if int(packet.Header.Length) != len(packet.Payload) { //如果接收的数据包大小与传输大小不一致，则丢弃
-			//	return nil
-			//}
 			group.Shards[packet.Header.ShardIdx] = packet.Payload[FecPacketHeaderLength:]
 		}
 		group.Packets[packet.Header.ShardIdx] = packet // 记录原始包指针
@@ -281,22 +277,17 @@ func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 		header := next.HeaderSample //连续组装，不能使用packet，而应该从当前分组取样本
 		if next.Received < header.DataShards {
 			if next.ExpiredAt.Before(time.Now()) { //如果已经过期，则不再等待，直接接收下一个
-				if sc.ChannelId == 2 {
-					slog.Debug("帧接收超时丢弃！", slog.Int("channel", sc.ChannelId), slog.Any("groupId", g.NextGroupId))
-				}
+				slog.Debug("帧接收超时丢弃！", slog.Int("channel", sc.ChannelId), slog.Any("groupId", g.NextGroupId))
 				delete(g.Groups, g.NextGroupId)
 				g.NextGroupId++ // 单协程处理下无需 atomic，若多协程则整体加锁
 				continue        //过期了，不论是否是关键帧，我们都丢弃了，那么还需要继续等待下一个
 			}
 			if isRtp && header.Idr == 1 { //如果是rtp数据包，我们需要检查一下
 				if header.GroupId > g.NextGroupId {
-					if sc.ChannelId == 2 {
-						slog.Debug("帧接收新的关键帧，跳到！", slog.Int("channel", sc.ChannelId),
-							slog.Any("groupId", header.GroupId))
-					}
+					slog.Debug("帧接收新的关键帧，跳到！", slog.Int("channel", sc.ChannelId),
+						slog.Any("groupId", header.GroupId))
 					for i := g.NextGroupId; i < header.GroupId; i++ { //循环删除当前帧之前的数据
 						delete(g.Groups, i)
-						slog.Debug("清除到下个关键帧直接的缓存数据，快速追帧！", slog.Any("groupId", i))
 					}
 					g.NextGroupId = header.GroupId //直接移动到当前帧
 					continue
@@ -325,6 +316,7 @@ func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 			//1，我需要补充没有到的正规rtp 包的头信息 ，假设 一共6个数据包，数据分片是4个，当前到达的索引是 0,1,3,4，那么则需要补充序号是2的rtp头
 			//2，我需要告诉上层逻辑，fec已经处理完毕了
 			isVideo := next.Packets[0].Payload[1] != 0x61 && next.Packets[0].Payload[1] != 0x7f
+			//slog.Debug("fec开始重组", slog.Any("channel id", sc.ChannelId), slog.Any("groupId", header.GroupId))
 			for i := 0; i < int(header.DataShards); i++ {
 				var resultData []byte
 				if next.Packets[i] == nil { //Payload 是携带rtp包头信息的完整数据缓存
@@ -338,7 +330,7 @@ func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 					binary.LittleEndian.PutUint32(resultData[28:32], oldFecInfo&^(0x7F<<4))
 					binary.LittleEndian.PutUint32(resultData[16:], uint32(binary.BigEndian.Uint16(resultData[2:]))<<8)
 				}
-
+				//slog.Debug("fec重组了一条数据", slog.Any("channel id", sc.ChannelId), slog.Any("shard index", i))
 				if sc.Channel != nil {
 					sc.Channel <- StreamChannelData{
 						ClientId:  sc.ClientId,
@@ -348,7 +340,9 @@ func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 					}
 				}
 			}
+			//slog.Debug("fec完成重组", slog.Any("channel id", sc.ChannelId), slog.Any("groupId", header.GroupId))
 		} else {
+			//slog.Debug("fec收到意料外的数据", slog.Any("channel id", sc.ChannelId))
 			var frameBuf bytes.Buffer
 			err = encoder.Join(&frameBuf, next.Shards, int(header.Total))
 			if err != nil {

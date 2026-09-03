@@ -34,21 +34,19 @@ type Config struct {
 func (c *StreamConfig) SetStreamType(t StreamType) {
 	if c.Type != t {
 		c.Type = t
-		if c.Type != Message {
+		switch c.Type {
+		case Audio: //音频，默认33%
 			c.EnableFec = true
-			switch c.Type {
-			case Audio: //音频，默认33%
-				c.DataShards = 4
-				c.ParityShards = 2
-			case Video: //视频，默认30%
-				c.DataShards = 10
-				c.ParityShards = 3
-				break
-			default:
-				break
-			}
-		} else {
+			c.DataShards = 4
+			c.ParityShards = 2
+		case Video: //视频，默认30%
+			c.EnableFec = true
+			c.DataShards = 10
+			c.ParityShards = 3
+			break
+		default:
 			c.EnableFec = false
+			break
 		}
 	}
 }

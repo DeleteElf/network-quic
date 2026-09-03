@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net/http"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"time"
 	"unsafe"
@@ -355,7 +356,7 @@ func ClientChannelClose(chnIdx C.int) C.int {
 		}
 	}
 	if count == 0 {
-		clientCtx.Close()
+		_ = clientCtx.Close()
 		return C.Closed
 	}
 	return C.Success
@@ -741,7 +742,7 @@ func WebSocketConnect(config *C.NetworkData) C.int {
 //export WebSocketClose
 func WebSocketClose() C.int {
 	if websocketClient != nil {
-		websocketClient.Close()
+		_ = websocketClient.Close()
 		websocketClient = nil
 	}
 	return C.Success

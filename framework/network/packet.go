@@ -104,7 +104,7 @@ type AudioFecPacket struct {
 	Payload   []byte
 }
 
-var RtpPacketTooShort = errors.New("Rtp数据包长度不足，转换失败")
+var RtpPacketTooShort = errors.New("数据包长度不足，转换失败")
 
 // ConvertByteToRtpPacket 将数据直接转成RtpPacket结构，要求数据结构对齐，修改结构变量即修改数据变量，windows这里会默认执行Little-Endian
 func ConvertByteToRtpPacket(data []byte) (*RtpPacket, error) {
@@ -161,7 +161,7 @@ func ConvertByteToFecPacketHeader(data []byte) (*FecPacketHeader, error) {
 		h.Length = binary.BigEndian.Uint16(data[30:32])
 		return &h, nil
 	}
-	return nil, errors.New("转换失败！")
+	return nil, RtpPacketTooShort
 }
 
 // ConvertByteToVideoPacket 将数据直接转成VideoPacket结构，要求数据结构对齐，修改结构变量即修改数据变量，windows这里会默认执行Little-Endian
@@ -190,7 +190,7 @@ func ConvertByteToVideoPacket(data []byte) (*VideoPacket, error) {
 			Payload: data[VideoHeaderLength:],
 		}, nil
 	}
-	return nil, errors.New("转换失败！")
+	return nil, RtpPacketTooShort
 }
 
 func ConvertToByte(p unsafe.Pointer, size uintptr) []byte {
