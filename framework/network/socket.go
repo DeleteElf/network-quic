@@ -541,8 +541,8 @@ func (s *Socket) SendFecDatagram(channelId int, data []byte) (bool, error) {
 				copy(buffer[i][:VideoHeaderLength], buffer[0][:VideoHeaderLength]) //拷贝头部数据
 				binary.LittleEndian.PutUint32(buffer[i][28:],
 					uint32(dataShards)<<22|uint32(i)<<12|uint32(idrData)<<11|uint32(fecPercentage)<<4|uint32(channelId)) //FecInfo 增加idr信息、通道信息
-				binary.BigEndian.PutUint16(buffer[i][2:], uint16(lowSeq+uint32(i)))                                      //SequenceNumber
-				binary.LittleEndian.PutUint32(buffer[i][16:], (lowSeq+uint32(i))<<8)                                     //streamPacketIndex 这个也需要变化
+				binary.BigEndian.PutUint16(buffer[i][2:], uint16(lowSeq+uint32(i)))  //SequenceNumber
+				binary.LittleEndian.PutUint32(buffer[i][16:], (lowSeq+uint32(i))<<8) //streamPacketIndex 这个也需要变化
 				buffer[i][16] = packetIndex
 				buffer[i][24] = 0 //这个属性是什么并不重要
 				buffer[i][26] = 0
