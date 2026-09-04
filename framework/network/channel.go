@@ -186,6 +186,17 @@ func (sc *StreamChannel) Send(data []byte) (bool, error) {
 	return err == nil, err
 }
 
+func (sc *StreamChannel) CheckTimeout(group *FecGroup, groups *FecGroupsMap) bool {
+	if group.ExpiredAt.Before(time.Now()) { //如果已经过期，则不再等待，直接接收下一个
+		slog.Debug("帧接收超时丢弃！", slog.Int("channel", sc.ChannelId), slog.Any("groupId", groups.NextGroupId))
+		delete(groups.Groups, groups.NextGroupId)
+		groups.NextGroupId++ // 单协程处理下无需 atomic，若多协程则整体加锁
+		//continue        //过期了，不论是否是关键帧，我们都丢弃了，那么还需要继续等待下一个
+		return true
+	}
+	return false
+}
+
 func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 	//slog.Debug("fec开始解码", slog.Any("channel id", sc.ChannelId), slog.Any("ssrc", packet.Header.Ssrc), slog.Any("groupId", packet.Header.GroupId))
 	totalShards := packet.Header.DataShards + packet.Header.ParityShards
@@ -246,11 +257,8 @@ func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 		// 如果当前等待的组包数量还不足以解码，直接中断等待下一个网络包到达，切勿死循环！
 		header := next.HeaderSample //连续组装，不能使用packet，而应该从当前分组取样本
 		if next.Received < header.DataShards {
-			if next.ExpiredAt.Before(time.Now()) { //如果已经过期，则不再等待，直接接收下一个
-				slog.Debug("帧接收超时丢弃！", slog.Int("channel", sc.ChannelId), slog.Any("groupId", g.NextGroupId))
-				delete(g.Groups, g.NextGroupId)
-				g.NextGroupId++ // 单协程处理下无需 atomic，若多协程则整体加锁
-				continue        //过期了，不论是否是关键帧，我们都丢弃了，那么还需要继续等待下一个
+			if sc.CheckTimeout(next, g) {
+				continue
 			}
 			if isRtp && header.Idr == 1 { //如果是rtp数据包，我们需要检查一下
 				if utils.IsBefore8(g.NextGroupId, header.GroupId) {
@@ -272,10 +280,16 @@ func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 		// 关键优化：使用 ReconstructData 仅恢复数据分片，比 Reconstruct 省时省 CPU
 		encoder, err := sc.GetFecEncoder(header.DataShards, header.ParityShards)
 		if err != nil {
+			if sc.CheckTimeout(next, g) {
+				continue
+			}
 			return fmt.Errorf("获取fec解码器出错【%d】: %w", header.GroupId, err)
 		}
 		err = encoder.ReconstructData(next.Shards)
 		if err != nil {
+			if sc.CheckTimeout(next, g) {
+				continue
+			}
 			return fmt.Errorf("fec解码出错【%d】:  %w", header.GroupId, err)
 		}
 		//slog.Debug("解码fec完成", slog.Int("groupId", int(next.GroupID)))

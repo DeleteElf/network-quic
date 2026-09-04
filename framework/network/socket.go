@@ -553,7 +553,6 @@ func (s *Socket) SendFecDatagram(channelId int, data []byte) (bool, error) {
 				return false, err
 			}
 			err = encoder.Encode(shards)
-
 			if err != nil {
 				slog.Debug("编码fec过程发生错误", slog.Int("channelId", channelId),
 					slog.Any("DataShards", dataShards), slog.Any("ParityShards", parityShards),
