@@ -294,7 +294,6 @@ func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 			for i := 0; i < int(header.DataShards); i++ {
 				var resultData []byte
 				if next.Packets[i] == nil { //Payload 是携带rtp包头信息的完整数据缓存
-					//todo:这里重新构建缺失的头，那么取的数据可能是其他任意数据的头，因为，我们不知道是哪个
 					resultData = RebuildRtpPacket(next.HeaderTemplate, next.Shards[i], uint8(i), header.DataShards)
 				} else { //清除fecPercentage的数据
 					resultData = next.Packets[i].Payload //直接使用原始数据包，实现零拷贝

@@ -152,11 +152,12 @@ func RebuildRtpPacket(header, data []byte, shardIndex, dataShards uint8) []byte 
 		switch header[1] {
 		case 0x61: //标准音频
 			sequenceNumber := binary.BigEndian.Uint16(buffer[2:])
-			sequenceNumber = sequenceNumber - sequenceNumber%uint16(dataShards) + uint16(shardIndex) //计算当前的包
+			sequenceNumber = sequenceNumber - sequenceNumber%uint16(dataShards) + uint16(shardIndex) //计算当前的包位置
 			binary.BigEndian.PutUint16(buffer[2:], sequenceNumber)
 		case 0x7f: //动态音频
-			sequenceNumber := binary.BigEndian.Uint16(buffer[14:]) - uint16(dataShards) + 1 + uint16(shardIndex)
-			buffer[1] = 0x61 //通过动态音频获取的 packetType为127，我们需要修改成97
+			baseSequenceNumber := binary.BigEndian.Uint16(buffer[14:])
+			sequenceNumber := baseSequenceNumber - uint16(dataShards) + 1 + uint16(shardIndex) //计算当前的包位置
+			buffer[1] = 0x61                                                                   //通过动态音频获取的 packetType为127，我们需要修改成97
 			binary.BigEndian.PutUint16(buffer[2:], sequenceNumber)
 		default: //其他都是视频 视频数据的rtp包数据都是一样的
 			//sequenceNumber 和 fec info 需要重建
