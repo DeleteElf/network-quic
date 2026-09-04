@@ -171,8 +171,10 @@ func RebuildRtpPacket(header, data []byte, shardIndex, dataShards uint8) []byte 
 		oldShardIndex := uint16((oldFecInfo >> 12) & 0x3FF)
 		newFecInfo := (oldFecInfo & 0xFFF) | (uint32(dataShards) << 22) | (uint32(shardIndex) << 12) // 清空高 20 位（保留低 12 位 0x00000FFF），并填入新的 dataShards 和 shardIndex
 		binary.LittleEndian.PutUint32(buffer[28:], newFecInfo)
-		sequenceNumber := binary.BigEndian.Uint16(buffer[2:]) - oldShardIndex + uint16(shardIndex)
-		binary.BigEndian.PutUint16(buffer[2:], sequenceNumber)
+		baseSequenceNumber := (binary.LittleEndian.Uint32(buffer[16:]) >> 8) - uint32(oldShardIndex)
+		sequenceNumber := baseSequenceNumber + uint32(shardIndex)
+		binary.BigEndian.PutUint16(buffer[2:], uint16(sequenceNumber))
+		binary.LittleEndian.PutUint32(buffer[16:], sequenceNumber<<8) //streamPacketIndex 这个也需要变化
 		//补充算法生成的数据包是否是开头和结束的标志
 		buffer[24] = 0x1
 		if shardIndex == 0 {

@@ -272,11 +272,11 @@ func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 		// 关键优化：使用 ReconstructData 仅恢复数据分片，比 Reconstruct 省时省 CPU
 		encoder, err := sc.GetFecEncoder(header.DataShards, header.ParityShards)
 		if err != nil {
-			return fmt.Errorf("获取fec解码器出错: %w", err)
+			return fmt.Errorf("获取fec解码器出错【%d】: %w", header.GroupId, err)
 		}
 		err = encoder.ReconstructData(next.Shards)
 		if err != nil {
-			return fmt.Errorf("fec解码出错: %w", err)
+			return fmt.Errorf("fec解码出错【%d】:  %w", header.GroupId, err)
 		}
 		//slog.Debug("解码fec完成", slog.Int("groupId", int(next.GroupID)))
 		delete(g.Groups, header.GroupId)
@@ -302,7 +302,6 @@ func (sc *StreamChannel) FecDecode(packet *FecPacket) error {
 				if isVideo { //因为我们已经处理过fec了，必须告诉上层没有fec分片数据了
 					oldFecInfo := binary.LittleEndian.Uint32(resultData[28:])
 					binary.LittleEndian.PutUint32(resultData[28:32], oldFecInfo&^(0x7F<<4))
-					binary.LittleEndian.PutUint32(resultData[16:], uint32(binary.BigEndian.Uint16(resultData[2:]))<<8)
 				}
 				//slog.Debug("fec重组了一条数据", slog.Any("channel id", sc.ChannelId), slog.Any("shard index", i))
 				if sc.Channel != nil {

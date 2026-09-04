@@ -269,7 +269,7 @@ func (s *Socket) HandleChannelStreamDatagram() {
 			}
 			err = sc.FecDecode(packet)
 			if err != nil {
-				slog.Error("解码fec过程发生错误", slog.Any("err", err))
+				slog.Error("解码fec过程发生错误", slog.Any("channelId", packet.Header.ChannelId), slog.Any("err", err))
 				continue
 			}
 		}
@@ -361,7 +361,7 @@ func (s *Socket) GetFecDecodeInfo(data []byte) *FecPacket {
 			s.StreamChannels[result.Header.ChannelId].FecGroups[result.Header.Ssrc] = fecGroupMap
 		}
 		result.Header.GroupId = data[19] //  uint64(binary.BigEndian.Uint32(data[16:]))
-
+		data[19] = 0                     //	取完数据就还原，其实这个不处理也没事
 		//slog.Debug("step 20", slog.Any("ChannelId", result.Header.ChannelId), slog.Any("Ssrc", result.Header.Ssrc))
 		nextGroupId := fecGroupMap.NextGroupId
 		if utils.IsBefore8(result.Header.GroupId, nextGroupId) { //已经解码成功的Id就不要了
@@ -485,7 +485,7 @@ func (s *Socket) SendFecDatagram(channelId int, data []byte) (bool, error) {
 		fecInfo := binary.LittleEndian.Uint32(data[28:32])
 		fecPercentage := uint8(fecInfo >> 4 & 0x7f)
 		idrData := int(fecInfo >> 11 & 0x1)
-		lowSeq := binary.LittleEndian.Uint16(data[16:20]) >> 8
+		lowSeq := binary.LittleEndian.Uint32(data[16:20]) >> 8
 		ssrc := uint8(binary.BigEndian.Uint32(data[8:])) //bits.ReverseBytes32(firstPacketHeader.Rtp.Ssrc)
 
 		if _, exists := s.FecPacketIndex[ssrc]; !exists {
@@ -520,8 +520,8 @@ func (s *Socket) SendFecDatagram(channelId int, data []byte) (bool, error) {
 			} else {
 				buffer[i] = data[offset : offset+blockSize] //取数据切片,实现零拷贝
 			}
-			shards[i] = buffer[i][VideoHeaderLength:blockSize] //取数据切片
 			buffer[i][19] = packetIndex                        //将数据藏在 剩余协议位置里
+			shards[i] = buffer[i][VideoHeaderLength:blockSize] //取数据切片
 			//binary.BigEndian.PutUint32(buffer[i][16:], packetIndex) //StreamPacketIndex
 		}
 		if fecPercentage != 0 {
@@ -541,8 +541,10 @@ func (s *Socket) SendFecDatagram(channelId int, data []byte) (bool, error) {
 				copy(buffer[i][:VideoHeaderLength], buffer[0][:VideoHeaderLength]) //拷贝头部数据
 				binary.LittleEndian.PutUint32(buffer[i][28:],
 					uint32(dataShards)<<22|uint32(i)<<12|uint32(idrData)<<11|uint32(fecPercentage)<<4|uint32(channelId)) //FecInfo 增加idr信息、通道信息
-				binary.BigEndian.PutUint16(buffer[i][2:], uint16(uint32(lowSeq)+uint32(i)))                              //SequenceNumber
-				buffer[i][24] = 0                                                                                        //这个属性是什么并不重要
+				binary.BigEndian.PutUint16(buffer[i][2:], uint16(lowSeq+uint32(i)))                                      //SequenceNumber
+				binary.LittleEndian.PutUint32(buffer[i][16:], (lowSeq+uint32(i))<<8)                                     //streamPacketIndex 这个也需要变化
+				buffer[i][19] = packetIndex
+				buffer[i][24] = 0 //这个属性是什么并不重要
 				buffer[i][26] = 0
 				shards[i] = buffer[i][VideoHeaderLength:blockSize]
 			}
